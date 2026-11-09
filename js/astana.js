@@ -7,6 +7,7 @@ import { mulberry32 } from './noise.js';
 import { spruceGeometry, branchTexture, grassTexture, windSway, tbox, tcyl } from './world.js';
 import { ZONES, WATER_LEVEL } from './config.js';
 import { makeFacadeMaterials, SHOP_H, CarFleet, carSpec } from './cityprops.js';
+import { buildYards } from './yards.js';
 
 const ENV = 'assets/env/';
 const SKY = 'kloofendal_28d_misty_puresky';
@@ -111,7 +112,7 @@ function addCircle(x, z, r, tall = 0) {
 
 // ================= Загрузка =================
 const TEX = ['leafy_grass', 'worn_asphalt', 'concrete_pavers', 'granite_tile', 'concrete_floor_worn_001', 'bark_brown_02'];
-const MODELS = ['wooden_crate_01', 'stone_fire_pit', 'wine_barrel_01'];
+const MODELS = ['wooden_crate_01', 'stone_fire_pit', 'wine_barrel_01', 'shrub_03'];
 export async function loadWorldAssets(renderer, scene, onProgress) {
   const total = TEX.length * 2 + MODELS.length + 2;
   let done = 0;
@@ -536,6 +537,10 @@ export function buildWorld(scene) {
     }
     if (fenceGeo.length) { const fm = new THREE.Mesh(mergeGeometries(fenceGeo), fenceMat); fm.castShadow = true; scene.add(fm); }
   }
+
+  // ---------- дворы и детали улиц ----------
+  const yardStats = buildYards({ scene, city, rng, getHeight, addCircle, pip, M, T, isRoad, inBuilding, nearZone });
+  console.log('[астана] дворы:', yardStats);
 
   // ---------- Байтерек ----------
   {

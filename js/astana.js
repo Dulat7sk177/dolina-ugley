@@ -6,6 +6,7 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { mulberry32 } from './noise.js';
 import { spruceGeometry, branchTexture, grassTexture, windSway, tbox, tcyl } from './world.js';
 import { ZONES, WATER_LEVEL } from './config.js';
+import { makeFacadeMaterials, SHOP_H, CarFleet, carSpec } from './cityprops.js';
 
 const ENV = 'assets/env/';
 const SKY = 'kloofendal_28d_misty_puresky';
@@ -147,39 +148,17 @@ function rasterHeights(bridges) {
   return out;
 }
 
-// ================= Текстуры фасадов (рисуются кодом) =================
-function facadeTexture(style, seed) {
-  const r = mulberry32(seed);
-  const [c, g] = canvas2(512, 512);
-  const walls = { glass: '#3c5560', panel0: '#d8d2c4', panel1: '#c9b9a0', panel2: '#e6e2da', low0: '#b9a184', low1: '#cfc3ad' };
-  g.fillStyle = walls[style]; g.fillRect(0, 0, 512, 512);
-  // грязь и потёки
-  for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(40,35,30,${r() * 0.08})`; g.fillRect(r() * 512, r() * 512, 4 + r() * 30, 30 + r() * 120); }
-  const floors = 4, bays = 4, fh = 512 / floors, bw = 512 / bays;
-  for (let f = 0; f < floors; f++) for (let b = 0; b < bays; b++) {
-    const x = b * bw, y = f * fh;
-    if (style === 'glass') {
-      const k = 0.5 + r() * 0.3;
-      const grd = g.createLinearGradient(x, y, x + bw, y + fh);
-      grd.addColorStop(0, `rgb(${70 * k},${110 * k},${125 * k})`); grd.addColorStop(1, `rgb(${30 * k},${55 * k},${68 * k})`);
-      g.fillStyle = grd; g.fillRect(x + 3, y + 3, bw - 6, fh - 6);
-      if (r() < 0.12) { g.fillStyle = '#0b0d0e'; g.fillRect(x + 3, y + 3, bw - 6, fh - 6); g.strokeStyle = 'rgba(200,220,230,0.5)'; g.beginPath(); for (let k2 = 0; k2 < 5; k2++) { g.moveTo(x + bw / 2, y + fh / 2); g.lineTo(x + r() * bw, y + r() * fh); } g.stroke(); }
-      g.fillStyle = '#1d2326'; g.fillRect(x, y, bw, 4); g.fillRect(x, y, 4, fh);
-    } else {
-      const wx = x + bw * 0.22, wy = y + fh * 0.25, ww = bw * 0.56, wh = fh * 0.5;
-      g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(wx - 4, wy - 4, ww + 8, wh + 10);
-      const roll = r();
-      if (roll < 0.1) { g.fillStyle = '#080808'; g.fillRect(wx, wy, ww, wh); } // выбитое окно
-      else if (roll < 0.16) { g.fillStyle = '#6b4f32'; for (let k2 = 0; k2 < 4; k2++) g.fillRect(wx - 2, wy + k2 * (wh / 4) + 2, ww + 4, wh / 4 - 4); } // заколочено
-      else { const grd = g.createLinearGradient(wx, wy, wx, wy + wh); grd.addColorStop(0, '#5f7580'); grd.addColorStop(1, '#2a3338'); g.fillStyle = grd; g.fillRect(wx, wy, ww, wh); g.fillStyle = '#ddd'; g.fillRect(wx + ww / 2 - 2, wy, 4, wh); }
-      g.fillStyle = 'rgba(0,0,0,0.12)'; g.fillRect(x, y + fh - 6, bw, 6);
-    }
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
-  t.repeat.set(1 / 12, 1 / 12.8); t.offset.set(0, -1 / 12.8);
-  return t;
-}
+// Развёртка стен: координата u идёт вдоль каждой стены в одну сторону — надписи не зеркалятся
+const V2 = (x, y) => new THREE.Vector2(x, y);
+const WALL_UV = {
+  generateTopUV(g, v, a, b, c) { return [V2(v[a * 3], v[a * 3 + 1]), V2(v[b * 3], v[b * 3 + 1]), V2(v[c * 3], v[c * 3 + 1])]; },
+  generateSideWallUV(g, v, a, b, c, d) {
+    const ax = v[a * 3], ay = v[a * 3 + 1], az = v[a * 3 + 2], bx = v[b * 3], by = v[b * 3 + 1], bz = v[b * 3 + 2];
+    let dx = bx - ax, dy = by - ay; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    const ua = ax * dx + ay * dy, ub = bx * dx + by * dy;
+    return [V2(ua, 1 - az), V2(ub, 1 - bz), V2(ub, 1 - v[c * 3 + 2]), V2(ua, 1 - v[d * 3 + 2])];
+  },
+};
 function splitExtrude(geo) {
   const pos = geo.attributes.position, nor = geo.attributes.normal, uv = geo.attributes.uv;
   const make = (start, count) => {
@@ -271,33 +250,45 @@ export function buildWorld(scene) {
   scene.add(water);
 
   // ---------- здания ----------
-  const mats = {
-    glass: new THREE.MeshStandardMaterial({ map: facadeTexture('glass', 1), roughness: 0.18, metalness: 0.55 }),
-    panel0: new THREE.MeshStandardMaterial({ map: facadeTexture('panel0', 2), roughness: 0.88 }),
-    panel1: new THREE.MeshStandardMaterial({ map: facadeTexture('panel1', 3), roughness: 0.88 }),
-    panel2: new THREE.MeshStandardMaterial({ map: facadeTexture('panel2', 4), roughness: 0.88 }),
-    low0: new THREE.MeshStandardMaterial({ map: facadeTexture('low0', 5), roughness: 0.9 }),
-    low1: new THREE.MeshStandardMaterial({ map: facadeTexture('low1', 6), roughness: 0.9 }),
-  };
+  const mats = makeFacadeMaterials();
   const roofTex = T.concrete_floor_worn_001.map.clone(); roofTex.repeat.set(1 / 6, 1 / 6); roofTex.needsUpdate = true;
   const roofMat = new THREE.MeshStandardMaterial({ map: roofTex, roughness: 0.95, color: 0x9a9a98 });
   const buckets = new Map([['roof', []], ...Object.keys(mats).map((k) => [k, []])]);
   const tall = [];
   for (const b of city.buildings) {
     const h = Math.max(3, Math.min(400, b.h)), mh = Math.min(b.mh || 0, h - 1);
+    // контур чуть сжат к центру (на 3–15 см), чтобы стены пересекающихся зданий из OSM не мерцали
+    let ccx = 0, ccz = 0; const nn = b.p.length / 2; for (let k = 0; k < b.p.length; k += 2) { ccx += b.p[k]; ccz += b.p[k + 1]; } ccx /= nn; ccz /= nn;
+    const shrink = (k) => { const dx = b.p[k] - ccx, dz = b.p[k + 1] - ccz, d = Math.hypot(dx, dz) || 1, inset = Math.min(0.15, 0.03 + (k % 5) * 0.03); return [b.p[k] - (dx / d) * inset, b.p[k + 1] - (dz / d) * inset]; };
     const shape = new THREE.Shape();
-    shape.moveTo(b.p[0], -b.p[1]);
-    for (let i = 2; i < b.p.length; i += 2) shape.lineTo(b.p[i], -b.p[i + 1]);
-    let geo;
-    try { geo = new THREE.ExtrudeGeometry(shape, { depth: h - mh, bevelEnabled: false }); } catch { continue; }
-    geo.rotateX(-Math.PI / 2);
-    if (mh) geo.translate(0, mh, 0);
-    const [caps, sides] = splitExtrude(geo);
-    geo.dispose();
-    const hv = ((b.p[0] * 13 + b.p[1] * 7) | 0) & 7;
-    const style = h >= 45 || ((b.k === 'office' || b.k === 'hotel' || b.k === 'commercial') && h > 20) ? 'glass' : b.k === 'apartments' || b.k === 'residential' || h > 18 ? 'panel' + (hv % 3) : 'low' + (hv % 2);
-    if (sides) buckets.get(style).push(sides);
-    if (caps) buckets.get('roof').push(caps);
+    const p0 = shrink(0); shape.moveTo(p0[0], -p0[1]);
+    for (let i = 2; i < b.p.length; i += 2) { const q = shrink(i); shape.lineTo(q[0], -q[1]); }
+    const hv = (((b.p[0] * 13 + b.p[1] * 7) | 0) >>> 0) % 997;
+    const glassy = h >= 45 || ((b.k === 'office' || b.k === 'hotel' || b.k === 'commercial' || b.k === 'retail') && h > 16);
+    const style = glassy ? ['glassBlue', 'glassBronze', 'glassGreen'][hv % 3]
+      : h <= 16 && b.k !== 'apartments' ? ['brickYellow', 'brickRed', 'panelBeige'][hv % 3]
+      : ['panelWhite', 'panelBeige', 'panelGrey'][hv % 3];
+    // первый этаж с витринами у городских домов (не у гаражей и не у «висящих» частей)
+    const shopBand = !mh && h > 9 && !['garage', 'garages', 'shed', 'industrial', 'kiosk'].includes(b.k) && (hv % 5) !== 0;
+    const ext = (y0, y1) => {
+      let g2;
+      try { g2 = new THREE.ExtrudeGeometry(shape, { depth: y1 - y0, bevelEnabled: false, UVGenerator: WALL_UV }); } catch { return [null, null]; }
+      g2.rotateX(-Math.PI / 2);
+      if (y0) g2.translate(0, y0, 0);
+      const res = splitExtrude(g2); g2.dispose(); return res;
+    };
+    if (shopBand) {
+      const [, shopSides] = ext(0, SHOP_H);
+      const [caps, sides] = ext(SHOP_H, h);
+      if (shopSides) buckets.get('shop').push(shopSides);
+      if (sides) buckets.get(style).push(sides);
+      if (caps) buckets.get('roof').push(caps);
+    } else {
+      const [caps, sides] = ext(mh, h);
+      if (!caps && !sides) continue;
+      if (sides) buckets.get(style).push(sides);
+      if (caps) buckets.get('roof').push(caps);
+    }
     if (mh < 2.5) addPoly(b.p, h);
     if (h > 30) tall.push({ b, h });
     // техника на крыше: вентиляция, лифтовые будки, антенны
@@ -433,17 +424,13 @@ export function buildWorld(scene) {
   lampsIM.castShadow = true; scene.add(lampsIM);
 
   // ---------- брошенные машины ----------
-  const carBodyGeo = mergeGeometries([tbox(1.85, 0.75, 4.4, 2).translate(0, 0.62, 0).toNonIndexed(), tbox(1.65, 0.62, 2.3, 2).translate(0, 1.3, -0.25).toNonIndexed()]);
-  const wheel = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 12).rotateZ(Math.PI / 2);
-  const carDarkGeo = mergeGeometries([
-    ...[[-0.86, 1.35], [0.86, 1.35], [-0.86, -1.35], [0.86, -1.35]].map(([x, z]) => wheel.clone().translate(x, 0.34, z).toNonIndexed()),
-    tbox(1.68, 0.42, 2.0, 1).translate(0, 1.34, -0.25).toNonIndexed(),
-  ]);
-  const carMat = new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.35 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x15181a, roughness: 0.4, metalness: 0.3 });
-  const NC = 1600, carIM = new THREE.InstancedMesh(carBodyGeo, carMat, NC), darkIM = new THREE.InstancedMesh(carDarkGeo, darkMat, NC);
-  const carCols = [0x4a4f54, 0x6b6e70, 0x7a3a2c, 0x2c3a4a, 0x8a8478, 0x3a3a36, 0x5a4a3a, 0xa8a8a2].map((h) => new THREE.Color(h));
+  const NC = 1600, fleet = new CarFleet(scene, 900, rng);
   let nc = 0;
+  // столкновения машины: цепочка кругов вдоль корпуса
+  const carCollide = (kind, x, z, ry) => {
+    const sp2 = carSpec(kind), n = Math.max(2, Math.round(sp2.L / 2.2)), r = sp2.W / 2 + 0.1;
+    for (let k = 0; k < n; k++) { const d = (k / (n - 1) - 0.5) * (sp2.L - sp2.W); addCircle(x + Math.sin(ry) * d, z + Math.cos(ry) * d, r); }
+  };
   const majors = city.roads.filter((r) => ['primary', 'secondary', 'tertiary', 'residential', 'service'].includes(r.t) && !r.tn);
   for (let tries = 0; nc < 450 && tries < 6000; tries++) {
     const r = majors[Math.floor(rng() * majors.length)];
@@ -457,12 +444,13 @@ export function buildWorld(scene) {
     if (r.b && rng() < 0.6) continue;
     const ry = Math.atan2(ux, uz) + (rng() - 0.5) * 0.9 + (rng() < 0.5 ? Math.PI : 0);
     const y = getHeight(x, z), burnt = rng() < 0.12;
-    const flip = rng() < 0.05;
-    mat4(x, y + (flip ? 1.75 : 0), z, ry, 1, 1, 1, 0, flip ? Math.PI : 0);
-    carIM.setMatrixAt(nc, m4); darkIM.setMatrixAt(nc, m4);
-    carIM.setColorAt(nc, burnt ? new THREE.Color(0x1e1a17) : carCols[Math.floor(rng() * carCols.length)]);
+    let kind = fleet.pick();
+    if (kind === 'bus' && !['primary', 'secondary'].includes(r.t)) kind = 'sedan';
+    const flip = kind !== 'bus' && rng() < 0.05, top = carSpec(kind).body.reduce((m, p) => Math.max(m, p[1]), 0);
+    mat4(x, y + (flip ? top + 0.05 : 0), z, ry, 1, 1, 1, 0, flip ? Math.PI : 0);
+    if (!fleet.add(kind, m4, burnt)) continue;
     nc++;
-    addCircle(x + Math.sin(ry) * 1.2, z + Math.cos(ry) * 1.2, 1.05); addCircle(x - Math.sin(ry) * 1.2, z - Math.cos(ry) * 1.2, 1.05);
+    carCollide(kind, x, z, ry);
     if (burnt) { flames.push({ meshes: [], light: null, o: rng() * 10, x, y: y + 1.2, z, color: 0xff8a30, size: 0.8 }); smokes.push({ x, y: y + 2, z, dark: 1, size: 1.4 }); }
   }
   // ряды машин на парковках
@@ -476,15 +464,14 @@ export function buildWorld(scene) {
         if (rng() > 0.62 || !pip(pk.p, x, z) || nearZone(x, z, 0)) continue;
         const ry = (alongX ? 0 : Math.PI / 2) + (rng() < 0.5 ? Math.PI : 0) + (rng() - 0.5) * 0.15, y = getHeight(x, z);
         mat4(x, y, z, ry, 1);
-        carIM.setMatrixAt(nc, m4); darkIM.setMatrixAt(nc, m4);
-        carIM.setColorAt(nc, carCols[Math.floor(rng() * carCols.length)]);
+        let kind = fleet.pick(); if (kind === 'bus' || kind === 'van') kind = 'sedan';
+        if (!fleet.add(kind, m4, rng() < 0.04)) continue;
         nc++;
-        addCircle(x + Math.sin(ry) * 1.2, z + Math.cos(ry) * 1.2, 1.05); addCircle(x - Math.sin(ry) * 1.2, z - Math.cos(ry) * 1.2, 1.05);
+        carCollide(kind, x, z, ry);
       }
     }
   }
-  carIM.count = darkIM.count = nc; carIM.castShadow = darkIM.castShadow = true;
-  scene.add(carIM, darkIM);
+  fleet.finish();
 
   // ---------- остановки, светофоры, скамейки, заборы ----------
   {

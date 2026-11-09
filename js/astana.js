@@ -6,7 +6,7 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { mulberry32 } from './noise.js';
 import { spruceGeometry, branchTexture, grassTexture, windSway, tbox, tcyl } from './world.js';
 import { ZONES, WATER_LEVEL } from './config.js';
-import { makeFacadeMaterials, SHOP_H, CarFleet, carSpec } from './cityprops.js';
+import { makeFacadeMaterials, SHOP_H, CarFleet, carSpec, PHOTO_FACADES, WALL_PHOTOS } from './cityprops.js';
 import { buildYards } from './yards.js';
 import { buildInteriors } from './interiors.js';
 import { pointBlocked } from './buildings.js';
@@ -127,8 +127,10 @@ function addCircle(x, z, r, tall = 0) {
 // ================= Загрузка =================
 const TEX = ['leafy_grass', 'worn_asphalt', 'concrete_pavers', 'granite_tile', 'concrete_floor_worn_001', 'bark_brown_02'];
 const MODELS = ['wooden_crate_01', 'stone_fire_pit', 'wine_barrel_01', 'shrub_03'];
+const PHOTO = {};
 export async function loadWorldAssets(renderer, scene, onProgress) {
-  const total = TEX.length * 2 + MODELS.length + 2;
+  const photoSets = [...Object.keys(PHOTO_FACADES).map((n) => [n, true]), ...WALL_PHOTOS.map((n) => [n, false])];
+  const total = TEX.length * 2 + MODELS.length + 2 + photoSets.reduce((a, [, f]) => a + (f ? 4 : 2), 0);
   let done = 0;
   const tick = () => onProgress?.(++done / total);
   const tl = new THREE.TextureLoader(), gl = new GLTFLoader();
@@ -136,6 +138,11 @@ export async function loadWorldAssets(renderer, scene, onProgress) {
   const loadTex = async (url, srgb) => { const t = await tl.loadAsync(url); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = aniso; if (srgb) t.colorSpace = THREE.SRGBColorSpace; tick(); return t; };
   await Promise.all([
     fetch('assets/astana/city.json').then((r) => r.json()).then((c) => { city = c; tick(); }),
+    ...photoSets.map(async ([n, full]) => {
+      const u = (k) => `${ENV}facades/${n}_${k}.jpg`;
+      const [map, normal, rough, metal] = await Promise.all([loadTex(u('Color'), true), loadTex(u('NormalGL'), false), full ? loadTex(u('Roughness'), false) : null, full ? loadTex(u('Metalness'), false) : null]);
+      PHOTO[n] = { map, normal, rough, metal };
+    }),
     ...TEX.map(async (n) => { const [map, normal] = await Promise.all([loadTex(`${ENV}tex/${n}_diff.jpg`, true), loadTex(`${ENV}tex/${n}_nor.jpg`, false)]); T[n] = { map, normal }; }),
     ...MODELS.map(async (n) => { const g = await gl.loadAsync(`${ENV}models/${n}/${n}.gltf`); g.scene.traverse((o) => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; } }); M[n] = g.scene; tick(); }),
     (async () => { const hdr = await new RGBELoader().loadAsync(`${ENV}sky/${SKY}_2k.hdr`); hdr.mapping = THREE.EquirectangularReflectionMapping; scene.background = hdr; scene.environment = hdr; tick(); })(),
@@ -265,7 +272,7 @@ export function buildWorld(scene) {
   scene.add(water);
 
   // ---------- здания ----------
-  const mats = makeFacadeMaterials();
+  const mats = makeFacadeMaterials(PHOTO);
   const roofTex = T.concrete_floor_worn_001.map.clone(); roofTex.repeat.set(1 / 6, 1 / 6); roofTex.needsUpdate = true;
   const roofMat = new THREE.MeshStandardMaterial({ map: roofTex, roughness: 0.95, color: 0x9a9a98 });
   const buckets = new Map([['roof', []], ...Object.keys(mats).map((k) => [k, []])]);
@@ -280,9 +287,9 @@ export function buildWorld(scene) {
     for (let i = 2; i < b.p.length; i += 2) { const q = shrink(i); shape.lineTo(q[0], -q[1]); }
     const hv = (((b.p[0] * 13 + b.p[1] * 7) | 0) >>> 0) % 997;
     const glassy = h >= 45 || ((b.k === 'office' || b.k === 'hotel' || b.k === 'commercial' || b.k === 'retail') && h > 16);
-    const style = glassy ? ['glassBlue', 'glassBronze', 'glassGreen'][hv % 3]
-      : h <= 16 && b.k !== 'apartments' ? ['brickYellow', 'brickRed', 'panelBeige'][hv % 3]
-      : ['panelWhite', 'panelBeige', 'panelGrey'][hv % 3];
+    const style = glassy ? ['ph_Facade001', 'ph_Facade005', 'ph_Facade006', 'ph_Facade019A', 'glassBronze', 'ph_Facade006'][hv % 6]
+      : h <= 16 && b.k !== 'apartments' ? ['brickYellow', 'brickRed', 'panelBeige', 'panelWhite'][hv % 4]
+      : ['panelWhite', 'panelBeige', 'panelGrey', 'ph_Facade018A', 'ph_Facade020A', 'panelWhite'][hv % 6];
     // первый этаж с витринами у городских домов (не у гаражей и не у «висящих» частей)
     const shopBand = !mh && h > 9 && !['garage', 'garages', 'shed', 'industrial', 'kiosk'].includes(b.k) && (hv % 5) !== 0;
     const ext = (y0, y1) => {
@@ -301,12 +308,12 @@ export function buildWorld(scene) {
       const [, shopSides] = ext(0, SHOP_H);
       const [caps, sides] = ext(SHOP_H, h);
       if (shopSides) buckets.get('shop').push(shopSides);
-      if (sides) buckets.get(style).push(sides);
+      if (sides) (buckets.get(style) || buckets.get('panelWhite')).push(sides);
       if (caps) buckets.get('roof').push(caps);
     } else {
       const [caps, sides] = ext(mh, h);
       if (!caps && !sides) continue;
-      if (sides) buckets.get(style).push(sides);
+      if (sides) (buckets.get(style) || buckets.get('panelWhite')).push(sides);
       if (caps) buckets.get('roof').push(caps);
     }
     if (mh < 2.5) addPoly(b.p, h);

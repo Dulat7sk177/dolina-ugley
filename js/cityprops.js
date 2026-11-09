@@ -19,12 +19,22 @@ const STYLES = {
   glassBlue: { kind: 'glass', tint: [70, 110, 135], frame: '#1c2226', fh: 3.8, bw: 1.6 },
   glassBronze: { kind: 'glass', tint: [120, 95, 70], frame: '#2a2420', fh: 3.8, bw: 1.6 },
   glassGreen: { kind: 'glass', tint: [70, 115, 105], frame: '#1d2523', fh: 3.8, bw: 1.6 },
-  panelWhite: { kind: 'panel', wall: [222, 218, 208], fh: 3.0, bw: 3.2 },
-  panelBeige: { kind: 'panel', wall: [205, 186, 155], fh: 3.0, bw: 3.2 },
-  panelGrey: { kind: 'panel', wall: [170, 172, 170], fh: 3.0, bw: 3.2 },
-  brickYellow: { kind: 'brick', wall: [196, 160, 98], fh: 3.1, bw: 3.0 },
-  brickRed: { kind: 'brick', wall: [140, 72, 56], fh: 3.1, bw: 3.0 },
+  panelWhite: { kind: 'panel', wall: [222, 218, 208], fh: 3.0, bw: 3.2, photo: 'PaintedPlaster015', tile: 3 },
+  panelBeige: { kind: 'panel', wall: [205, 186, 155], fh: 3.0, bw: 3.2, photo: 'PaintedPlaster018', tile: 3 },
+  panelGrey: { kind: 'panel', wall: [170, 172, 170], fh: 3.0, bw: 3.2, photo: 'PaintedPlaster012', tile: 3 },
+  brickYellow: { kind: 'brick', wall: [196, 160, 98], fh: 3.1, bw: 3.0, photo: 'Bricks105', tile: 1.6 },
+  brickRed: { kind: 'brick', wall: [140, 72, 56], fh: 3.1, bw: 3.0, photo: 'Bricks085', tile: 1.6 },
 };
+// Фасады целиком с фотографий (ambientCG, CC0): tile — размер одного повтора в метрах
+export const PHOTO_FACADES = {
+  Facade001: { tile: 36, metal: true }, // синее стекло
+  Facade005: { tile: 30, metal: true }, // зелёное стекло
+  Facade006: { tile: 28.8, metal: true }, // офис с ленточными окнами
+  Facade019A: { tile: 21, metal: true }, // бетонный офис
+  Facade018A: { tile: 19.2, metal: true }, // кирпичный жилой дом
+  Facade020A: { tile: 19.2, metal: true }, // кирпичный дом с пилонами
+};
+export const WALL_PHOTOS = [...new Set(Object.values(STYLES).map((st) => st.photo).filter(Boolean))];
 export const FACADE_STYLES = Object.keys(STYLES);
 
 function drawFacade(st, seed) {
@@ -56,10 +66,10 @@ function drawFacade(st, seed) {
     for (let f = 0; f < FLOORS; f++) { g.fillStyle = st.frame; g.fillRect(0, f * CELL, PX, 18); orm(0, f * CELL, PX, 18, 90, 255); g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(0, f * CELL + 18, PX, 3); }
     for (let b = 0; b <= BAYS; b++) { g.fillStyle = st.frame; g.fillRect(b * CELL - 4, 0, 8, PX); orm(b * CELL - 4, 0, 8, PX, 90, 255); }
   } else {
-    // стена
-    g.fillStyle = rgb(st.wall); g.fillRect(0, 0, PX, PX);
+    // стена: без фото — заливка цветом, с фото — прозрачный фон (фото подставит шейдер)
+    if (!st.photo) { g.fillStyle = rgb(st.wall); g.fillRect(0, 0, PX, PX); }
     o.fillStyle = 'rgb(0,235,0)'; o.fillRect(0, 0, PX, PX);
-    if (st.kind === 'brick') {
+    if (st.kind === 'brick' && !st.photo) {
       g.strokeStyle = 'rgba(0,0,0,0.13)'; g.lineWidth = 1.5;
       for (let y = 0; y < PX; y += 8) { g.beginPath(); g.moveTo(0, y); g.lineTo(PX, y); g.stroke(); for (let x = (y / 8) % 2 ? 0 : 10; x < PX; x += 20) { g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 8); g.stroke(); } }
     } else {
@@ -103,14 +113,40 @@ function drawFacade(st, seed) {
   return { map: tex(cc, true, rep, off), orm: tex(co, false, rep, off), emi: tex(ce, true, rep, off) };
 }
 
-export function makeFacadeMaterials() {
+// photo: { имя: { map, normal, rough?, metal? } } — загруженные фото-текстуры
+export function makeFacadeMaterials(photo = {}) {
   const mats = {};
   let seed = 11;
+  const tiled = (t, tile) => { if (!t) return null; const c = t.clone(); c.wrapS = c.wrapT = THREE.RepeatWrapping; c.repeat.set(1 / tile, -1 / tile); c.needsUpdate = true; return c; };
   for (const [name, st] of Object.entries(STYLES)) {
     const t = drawFacade(st, seed++);
-    mats[name] = new THREE.MeshStandardMaterial({
+    const ph = st.photo && photo[st.photo];
+    const m = new THREE.MeshStandardMaterial({
       map: t.map, roughnessMap: t.orm, metalnessMap: t.orm, roughness: 1, metalness: 1,
       emissiveMap: t.emi, emissive: 0xffffff, emissiveIntensity: 1.6,
+    });
+    if (ph) {
+      // окна и балконы — с канвы, стена между ними — фотография с рельефом
+      m.normalMap = tiled(ph.normal, st.tile); m.normalScale.set(0.9, 0.9);
+      const wallMap = tiled(ph.map, st.tile);
+      m.onBeforeCompile = (sh) => {
+        sh.uniforms.wallMap = { value: wallMap };
+        sh.fragmentShader = 'uniform sampler2D wallMap;\n' + sh.fragmentShader.replace('#include <map_fragment>', `
+          vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+          vec3 wallC = texture2D( wallMap, vNormalMapUv ).rgb;
+          diffuseColor.rgb *= mix( wallC, sampledDiffuseColor.rgb, sampledDiffuseColor.a );`);
+      };
+      m.customProgramCacheKey = () => 'photowall';
+    }
+    mats[name] = m;
+  }
+  for (const [name, spec] of Object.entries(PHOTO_FACADES)) {
+    const ph = photo[name];
+    if (!ph) continue;
+    mats['ph_' + name] = new THREE.MeshStandardMaterial({
+      map: tiled(ph.map, spec.tile), normalMap: tiled(ph.normal, spec.tile),
+      roughnessMap: tiled(ph.rough, spec.tile), metalnessMap: tiled(ph.metal, spec.tile),
+      roughness: 1, metalness: ph.metal ? 1 : 0.1, envMapIntensity: 1.2,
     });
   }
   mats.shop = makeShopMaterial();

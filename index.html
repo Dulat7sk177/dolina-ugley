@@ -83,18 +83,47 @@
     <div class="panel">
       <h1>Долина Углей</h1>
       <p class="sub">Кооперативная 3D RPG</p>
-      <label for="name">Имя героя</label>
-      <input id="name" maxlength="16" placeholder="Герой">
-      <label>Герой (у каждого игрока свой, до 4 в команде)</label>
-      <div class="classes" id="classes"></div>
-      <label>Карта (для новой игры)</label>
-      <div id="maps" class="maps"></div>
-      <button id="btn-host" class="primary">Создать игру</button>
-      <div class="or">или войти к другу</div>
-      <div class="join">
-        <input id="join-code" maxlength="8" placeholder="Код комнаты">
-        <button id="btn-join">Войти</button>
+
+      <!-- шаг 1: режим -->
+      <div id="scr-mode" class="scr">
+        <label for="name">Имя героя</label>
+        <input id="name" maxlength="16" placeholder="Герой">
+        <div class="modes">
+          <button class="mode-btn" id="btn-mode-single"><span>🗡️</span><b>Одиночная игра</b><small>Сразу в бой, без сети</small></button>
+          <button class="mode-btn" id="btn-mode-coop"><span>👥</span><b>Кооператив</b><small>До 4 игроков по коду комнаты</small></button>
+        </div>
       </div>
+
+      <!-- шаг 2: герой, карта, создать или войти -->
+      <div id="scr-setup" class="scr hidden">
+        <button class="back" id="btn-back-setup">← Назад</button>
+        <label>Герой <span id="hero-note"></span></label>
+        <div class="classes" id="classes"></div>
+        <div id="map-block">
+          <label>Карта</label>
+          <div id="maps" class="maps"></div>
+        </div>
+        <button id="btn-single" class="primary">Начать игру</button>
+        <div id="coop-block">
+          <button id="btn-host" class="primary">Создать сессию</button>
+          <div class="or">или войти к другу</div>
+          <div class="join">
+            <input id="join-code" maxlength="8" placeholder="Код комнаты">
+            <button id="btn-join">Войти</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- шаг 3: комната ожидания -->
+      <div id="scr-room" class="scr hidden">
+        <div class="room-code"><small>Код комнаты</small><b id="room-code">-----</b><button id="btn-copy-code">Копировать</button></div>
+        <div class="room-map" id="room-map"></div>
+        <div id="room-players" class="room-players"></div>
+        <button id="btn-ready" class="primary">Готов</button>
+        <button id="btn-start" class="primary">Начать игру</button>
+        <button class="back" id="btn-leave">Выйти из комнаты</button>
+      </div>
+
       <div id="status"></div>
     </div>
   </div>

@@ -206,9 +206,6 @@ document.querySelectorAll('.class-card').forEach((card) => card.addEventListener
   // уже подключены, но хост отказал — пробуем снова с новым героем
   if (G.awaitClass && G.net) { me.cls = selClass; G.net.send({ t: 'hello', name: me.name, cls: me.cls }); setStatus('Ждём ответа хоста…'); }
 }));
-const urlJoin = new URLSearchParams(location.search).get('join');
-if (urlJoin) $('join-code').value = urlJoin.toUpperCase();
-$('btn-host').onclick = () => startGame('host');
 // выбор карты (её выбирает тот, кто создаёт игру)
 let selMap = 'valley';
 try { selMap = localStorage.getItem('rpg-map') || 'valley'; } catch { /* ignore */ }
@@ -219,9 +216,10 @@ document.querySelectorAll('.map-card').forEach((card) => card.addEventListener('
   try { localStorage.setItem('rpg-map', selMap); } catch { /* ignore */ }
 }));
 // Загрузка персонажей сразу; мир — после выбора карты
-$('btn-host').disabled = $('btn-join').disabled = true;
+const startBtns = () => ['btn-single', 'btn-host', 'btn-join'].map($);
+startBtns().forEach((b) => { b.disabled = true; });
 let modelsReady = loadModels((p) => setStatus(`Загрузка персонажей… ${Math.round(p * 100)}%`))
-  .then(() => { setStatus(''); $('btn-host').disabled = $('btn-join').disabled = false; })
+  .then(() => { setStatus(''); startBtns().forEach((b) => { b.disabled = false; }); })
   .catch((err) => { console.error(err); setStatus('Не удалось загрузить персонажей. Запусти игру через start.bat', true); });
 async function loadMap(id) {
   useMap(id);
@@ -242,61 +240,161 @@ async function loadMap(id) {
   $('bossbar').querySelector('.bname').textContent = ENEMIES.boss.name;
   setStatus('');
 }
+// ===== Меню: одиночная игра / кооператив =====
+let menuMode = 'single';
+function showScreen(id) { for (const sc of ['scr-mode', 'scr-setup', 'scr-room']) $(sc).classList.toggle('hidden', sc !== id); }
+function readName() {
+  me.name = ($('name').value.trim() || 'Герой').slice(0, 16);
+  try { localStorage.setItem('rpg-name', me.name); } catch { /* ignore */ }
+}
+function openSetup(mode) {
+  readName(); menuMode = mode;
+  $('btn-single').classList.toggle('hidden', mode !== 'single');
+  $('coop-block').classList.toggle('hidden', mode !== 'coop');
+  $('hero-note').textContent = mode === 'coop' ? '(у каждого игрока свой)' : '';
+  $('map-block').querySelector('label').textContent = mode === 'coop' ? 'Карта (если создаёте сессию)' : 'Карта';
+  setStatus(''); showScreen('scr-setup');
+}
+$('btn-mode-single').onclick = () => openSetup('single');
+$('btn-mode-coop').onclick = () => openSetup('coop');
+$('btn-back-setup').onclick = () => { if (busy && !G.awaitClass) return; busy = false; takenCls = []; markTaken(); G.awaitClass = false; G.net?.destroy(); G.net = null; setStatus(''); showScreen('scr-mode'); };
+const urlJoin = new URLSearchParams(location.search).get('join');
+if (urlJoin) { $('join-code').value = urlJoin.toUpperCase(); openSetup('coop'); }
+$('btn-single').onclick = startSingle;
+$('btn-host').onclick = createSession;
 $('btn-join').onclick = () => {
   const c = $('join-code').value.trim().toUpperCase();
   if (!c) return setStatus('Введите код комнаты', true);
-  startGame('join', c);
+  joinSession(c);
 };
 $('join-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-join').click(); });
 function setStatus(t, err) { $('status').textContent = t; $('status').classList.toggle('err', !!err); }
+function pickHero() { me.cls = selClass; me.maxHp = me.hp = CLASSES[me.cls].hp; }
 
-async function startGame(mode, code) {
+// Одиночная игра: без сети, хост — сам игрок
+async function startSingle() {
   if (busy) return;
-  busy = true;
-  me.name = ($('name').value.trim() || 'Герой').slice(0, 16);
-  try { localStorage.setItem('rpg-name', me.name); } catch { /* ignore */ }
-  me.cls = selClass;
-  const c = CLASSES[me.cls];
-  me.maxHp = me.hp = c.hp;
-  if (mode === 'host') {
-    G.isHost = true; G.myId = 'host';
-    try { await loadMap(selMap); } catch (err) { console.error(err); setStatus('Не удалось загрузить карту', true); busy = false; return; }
-    G.sim = new HostSim();
-    G.sim.addPlayer('host', me.name, me.cls);
-    G.net = new Net();
-    setStatus('Создаём комнату…');
-    try {
-      G.code = await G.net.host({ onData: hostOnData, onLeave: (pid) => G.sim.removePlayer(pid) });
-    } catch (err) {
-      console.warn(err);
-      G.net.destroy(); G.net = null; G.code = null;
-      setTimeout(() => addChat(null, 'Сеть недоступна — играем соло.'), 100);
-    }
-    enterGame();
-  } else {
-    G.net = new Net();
-    setStatus('Подключаемся к комнате ' + code + '…');
-    try {
-      await G.net.join(code, { onData: clientOnData, onClose: onDisconnect });
-      G.code = code;
-      G.net.send({ t: 'hello', name: me.name, cls: me.cls });
-      setStatus('Ждём ответа хоста…');
-    } catch (err) {
-      setStatus('Не удалось подключиться: ' + (err.message || err.type || err), true);
-      G.net.destroy(); G.net = null; busy = false;
-    }
+  busy = true; readName(); pickHero();
+  G.isHost = true; G.myId = 'host';
+  try { await loadMap(selMap); } catch (err) { console.error(err); setStatus('Не удалось загрузить карту', true); busy = false; return; }
+  G.sim = new HostSim();
+  G.sim.addPlayer('host', me.name, me.cls);
+  enterGame();
+}
+
+// Кооператив: хост создаёт комнату и ждёт, пока все нажмут «Готов»
+async function createSession() {
+  if (busy) return;
+  busy = true; readName(); pickHero();
+  G.isHost = true; G.myId = 'host';
+  G.net = new Net();
+  setStatus('Создаём комнату…');
+  try {
+    G.code = await G.net.host({ onData: hostOnData, onLeave: hostOnLeave });
+  } catch (err) {
+    console.warn(err);
+    G.net.destroy(); G.net = null; G.code = null; busy = false;
+    setStatus('Не удалось создать комнату: сервер связи недоступен. Попробуйте ещё раз или играйте одни.', true);
+    return;
   }
+  G.lobby = new Map([['host', { name: me.name, cls: me.cls, ready: true, host: true }]]);
+  setStatus('');
+  showScreen('scr-room');
+  broadcastLobby();
+}
+function lobbyMsg() {
+  return { t: 'lobby', code: G.code, map: selMap, players: [...G.lobby].map(([id, p]) => [id, p.name, p.cls, p.ready ? 1 : 0, p.host ? 1 : 0]) };
+}
+function broadcastLobby() { const m = lobbyMsg(); G.net?.broadcast(m); renderRoom(m); }
+function hostOnLeave(pid) {
+  if (G.started) { G.sim.removePlayer(pid); return; }
+  if (G.lobby?.delete(pid)) broadcastLobby();
+}
+$('btn-start').onclick = startCoopGame;
+async function startCoopGame() {
+  if (!G.isHost || G.started || G.loading) return;
+  const notReady = [...G.lobby.values()].filter((p) => !p.ready);
+  if (notReady.length) return setStatus('Ждём, пока все нажмут «Готов»', true);
+  G.loading = true; $('btn-start').disabled = true;
+  try { await loadMap(selMap); } catch (err) { console.error(err); setStatus('Не удалось загрузить карту', true); G.loading = false; $('btn-start').disabled = false; return; }
+  G.sim = new HostSim();
+  for (const [id, p] of G.lobby) G.sim.addPlayer(id, p.name, p.cls);
+  G.net?.broadcast({ t: 'start', map: MAP.id });
+  enterGame();
+}
+
+// Подключение к чужой комнате
+async function joinSession(code) {
+  if (busy) return;
+  busy = true; readName(); pickHero();
+  G.net = new Net();
+  setStatus('Подключаемся к комнате ' + code + '…');
+  try {
+    await G.net.join(code, { onData: clientOnData, onClose: onDisconnect });
+    G.code = code;
+    G.net.send({ t: 'hello', name: me.name, cls: me.cls });
+    setStatus('Ждём ответа хоста…');
+  } catch (err) {
+    setStatus('Не удалось подключиться: ' + (err.message || err.type || err), true);
+    G.net.destroy(); G.net = null; busy = false;
+  }
+}
+G.ready = false;
+$('btn-ready').onclick = () => {
+  if (G.isHost || !G.net) return;
+  G.ready = !G.ready;
+  G.net.send({ t: 'ready', v: G.ready ? 1 : 0 });
+  $('btn-ready').classList.toggle('on', G.ready);
+  $('btn-ready').textContent = G.ready ? '✔ Готов (нажмите, чтобы отменить)' : 'Готов';
+};
+$('btn-copy-code').onclick = () => { navigator.clipboard?.writeText(G.code || ''); $('btn-copy-code').textContent = 'Скопировано'; };
+$('btn-leave').onclick = () => location.reload();
+
+function renderRoom(m) {
+  if (G.started) return;
+  $('room-code').textContent = m.code || G.code || '-----';
+  const map = MAP_LIST.find((x) => x.id === m.map);
+  $('room-map').textContent = map ? 'Карта: ' + map.title : '';
+  const rows = m.players.map(([id, name, cls, ready, host]) => {
+    const c = CLASSES[cls];
+    const st = host ? 'Хост' : ready ? '✔ Готов' : 'Не готов';
+    return `<div class="rp${ready || host ? ' ready' : ''}"><div class="ri">${c?.icon || '?'}</div><div class="rn">${esc(name)}${id === G.myId ? ' (вы)' : ''}<small>${esc(c?.name || '')}</small></div><div class="rs">${st}</div></div>`;
+  });
+  for (let i = m.players.length; i < MAX_PLAYERS; i++) rows.push('<div class="rp empty">свободное место</div>');
+  $('room-players').innerHTML = rows.join('');
+  const others = m.players.filter((p) => !p[4]);
+  const allReady = others.every((p) => p[3]);
+  $('btn-start').classList.toggle('hidden', !G.isHost);
+  $('btn-ready').classList.toggle('hidden', G.isHost);
+  if (G.isHost) {
+    $('btn-start').disabled = !allReady || !!G.loading;
+    $('btn-start').textContent = allReady ? (others.length ? 'Начать игру' : 'Начать игру (пока одни)') : `Ждём готовности: ${others.filter((p) => !p[3]).length}`;
+    if (!G.loading) setStatus(others.length ? '' : 'Отправьте код друзьям — они появятся в списке');
+  } else setStatus(G.ready ? 'Ждём, пока хост начнёт игру…' : 'Нажмите «Готов», когда будете готовы');
 }
 
 function hostOnData(pid, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.t === 'hello') {
-    if (G.sim.players.has(pid)) return;
-    const taken = [...G.sim.players.values()].map((p) => p.cls);
-    if (G.sim.players.size >= MAX_PLAYERS) { G.net.sendTo(pid, { t: 'reject', why: 'full' }); return; }
+    const roster = G.started ? [...G.sim.players.values()] : [...G.lobby.values()];
+    if (G.started ? G.sim.players.has(pid) : G.lobby.has(pid)) return;
+    const taken = roster.map((p) => p.cls);
+    if (roster.length >= MAX_PLAYERS) { G.net.sendTo(pid, { t: 'reject', why: 'full' }); return; }
     if (!CLASSES[msg.cls] || taken.includes(msg.cls)) { G.net.sendTo(pid, { t: 'reject', why: 'class', taken }); return; }
-    G.sim.addPlayer(pid, String(msg.name || 'Герой').slice(0, 16), msg.cls);
-    G.net.sendTo(pid, { t: 'welcome', id: pid, map: MAP.id });
+    const name = String(msg.name || 'Герой').slice(0, 16);
+    if (G.started) {
+      // игра уже идёт — сразу в бой
+      G.sim.addPlayer(pid, name, msg.cls);
+      G.net.sendTo(pid, { t: 'welcome', id: pid, map: MAP.id, started: 1 });
+    } else {
+      G.lobby.set(pid, { name, cls: msg.cls, ready: false });
+      G.net.sendTo(pid, { t: 'welcome', id: pid });
+      broadcastLobby();
+    }
+    return;
+  }
+  if (!G.started) {
+    if (msg.t === 'ready' && G.lobby.has(pid)) { G.lobby.get(pid).ready = !!msg.v; broadcastLobby(); }
     return;
   }
   if (!G.sim.players.has(pid)) return;
@@ -311,13 +409,19 @@ function clientOnData(msg) {
     return;
   }
   if (msg.t === 'welcome' && !G.started && !G.loading) {
-    G.myId = msg.id; G.loading = true; G.awaitClass = false;
+    G.myId = msg.id; G.awaitClass = false;
+    if (msg.started) { G.loading = true; loadMap(msg.map || 'valley').then(enterGame).catch((err) => { console.error(err); setStatus('Не удалось загрузить карту', true); }); }
+    else showScreen('scr-room');
+  }
+  else if (msg.t === 'lobby' && !G.started) renderRoom(msg);
+  else if (msg.t === 'start' && !G.started && !G.loading) {
+    G.loading = true; $('btn-ready').classList.add('hidden');
     loadMap(msg.map || 'valley').then(enterGame).catch((err) => { console.error(err); setStatus('Не удалось загрузить карту', true); });
   }
   else if (msg.t === 's' && G.started) applyState(msg);
 }
 function onDisconnect() {
-  if (!G.started) return;
+  if (!G.started) { if (G.myId && !G.loading) { setStatus('Хост закрыл комнату', true); setTimeout(() => location.reload(), 2500); } return; }
   $('disconnect').classList.remove('hidden');
   document.exitPointerLock?.();
 }
@@ -393,7 +497,7 @@ addEventListener('keydown', (e) => { if (noLock && e.code === 'Escape' && G.star
 addEventListener('mousemove', (e) => {
   if (!locked || (noLock && !rmbDrag)) return;
   cam.yaw -= e.movementX * 0.0024;
-  cam.pitch = clamp(cam.pitch + e.movementY * 0.002, -0.3, 1.25);
+  cam.pitch = clamp(cam.pitch + e.movementY * 0.002, -1.2, 1.25);
 });
 addEventListener('mousedown', (e) => {
   if (!locked) return;
@@ -532,7 +636,9 @@ function updateLocal(dt) {
 
 function updateCamera() {
   const tx = me.x, ty = me.y + 1.6, tz = me.z;
-  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  // ниже этого угла камера больше не опускается, а запрокидывается — можно смотреть вверх
+  const posPitch = Math.max(cam.pitch, -0.2), lookUp = posPitch - cam.pitch;
+  const cp = Math.cos(posPitch), sp = Math.sin(posPitch);
   const fx = Math.sin(cam.yaw), fz = Math.cos(cam.yaw), rx = -Math.cos(cam.yaw), rz = Math.sin(cam.yaw);
   const sh = 0.7;
   // камера не проходит сквозь камни, стены и деревья: укорачиваем дистанцию до первого препятствия
@@ -551,6 +657,7 @@ function updateCamera() {
   if (py < g) py = g;
   camera.position.set(px, py, pz);
   camera.lookAt(tx + rx * sh, ty, tz + rz * sh);
+  if (lookUp > 0) camera.rotateX(lookUp);
   sun.position.set(tx + SUN_DIR.x, ty + SUN_DIR.y, tz + SUN_DIR.z);
   sun.target.position.set(tx, ty, tz);
 }

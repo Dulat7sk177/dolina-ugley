@@ -78,7 +78,7 @@ function primary() {
     W.ammo[W.idx]--;
     C.send({ ...base, kind: 'shot', o: [r2(o.x), r2(o.y), r2(o.z)], d: [r2(d.x), r2(d.y), r2(d.z)] });
     muzzle(o, d, w.id === 'shotgun' ? 1.6 : 1);
-    C.cam.pitch = Math.max(-0.3, C.cam.pitch - (w.id === 'shotgun' ? 0.04 : w.id === 'revolver' ? 0.03 : 0.008));
+    C.cam.pitch = Math.max(-1.2, C.cam.pitch - (w.id === 'shotgun' ? 0.04 : w.id === 'revolver' ? 0.03 : 0.008));
     if (W.ammo[W.idx] <= 0) reload();
   } else if (p.kind === 'melee') {
     C.send({ ...base, kind: 'melee' });

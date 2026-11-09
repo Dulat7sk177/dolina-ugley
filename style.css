@@ -156,3 +156,30 @@ kbd { display: inline-block; padding: 1px 6px; border-radius: 4px; border: 1px s
   background: linear-gradient(#fff,#fff) center/2px 7px no-repeat, linear-gradient(#fff,#fff) center/7px 2px no-repeat; opacity: 0.85; filter: drop-shadow(0 0 2px #000); }
 #crosshair::after { content: ""; position: absolute; inset: 0; border: 1.5px solid rgba(255,255,255,0.55); border-radius: 50%; }
 #cartimer { position: absolute; left: 50%; top: 70px; transform: translateX(-50%); padding: 5px 14px; border-radius: 8px; background: rgba(20,16,12,0.8); border: 1px solid var(--gold-dim); font-weight: 700; }
+
+/* ===== меню: режимы, комната ===== */
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+.mode-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 10px; border-radius: 12px; background: #1c1712; border: 1px solid #4a3d28; }
+.mode-btn:hover { border-color: var(--gold); background: #2b2216; }
+.mode-btn span { font-size: 34px; }
+.mode-btn b { font-size: 17px; color: var(--gold); }
+.mode-btn small { font-size: 12px; color: var(--muted); font-weight: 400; }
+button.back { padding: 4px 10px; font-size: 13px; background: none; border-color: transparent; color: var(--muted); }
+button.back:hover { color: var(--text); background: none; }
+#scr-room button.back { display: block; margin: 10px auto 0; }
+.room-code { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 10px; border: 1px dashed var(--gold-dim); border-radius: 10px; }
+.room-code small { color: var(--muted); }
+.room-code b { font-size: 28px; letter-spacing: 5px; color: var(--gold); }
+.room-code button { padding: 5px 10px; font-size: 12px; }
+.room-map { text-align: center; color: var(--muted); font-size: 13px; margin: 8px 0 4px; }
+.room-players { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.rp { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 9px; background: #1c1712; border: 1px solid #3a3020; }
+.rp .ri { font-size: 22px; }
+.rp .rn { flex: 1; }
+.rp .rn small { display: block; color: var(--muted); font-size: 12px; }
+.rp .rs { font-size: 13px; font-weight: 700; color: #c9a36a; }
+.rp.ready { border-color: #4f8a3a; }
+.rp.ready .rs { color: #8fd36f; }
+.rp.empty { opacity: 0.4; border-style: dashed; justify-content: center; color: var(--muted); font-size: 13px; }
+#btn-ready.on { background: linear-gradient(#5fae46, #3d7a2a); border-color: #8fd36f; }
+#btn-start:disabled { filter: grayscale(1) brightness(0.6); cursor: not-allowed; }

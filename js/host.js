@@ -1,6 +1,6 @@
 // Симуляция на стороне хоста: враги, урон, опыт, задания. Клиенты получают снимки состояния.
 import { CLASSES, ENEMIES, ZONES, QUESTS, xpNeed } from './config.js';
-import { getHeight, resolveCollision } from './world.js';
+import { getHeight, resolveCollision, cameraBlocked } from './maps.js';
 import { resolveBoxes, pointBlocked } from './buildings.js';
 // игрок на другом этаже (выше врага) — недосягаем для ближнего боя
 const reachY = (p, e) => Math.abs(p.y - getHeight(e.x, e.z)) < 2.4;
@@ -287,7 +287,7 @@ export class HostSim {
     // --- снаряды ---
     this.projectiles = this.projectiles.filter((pr) => {
       pr.x += pr.vx * dt; pr.z += pr.vz * dt; pr.life -= dt;
-      let hit = pr.y < getHeight(pr.x, pr.z) + 0.2 || pointBlocked(pr.x, pr.y, pr.z, 0);
+      let hit = pr.y < getHeight(pr.x, pr.z) + 0.2 || cameraBlocked(pr.x, pr.y, pr.z);
       if (!hit) {
         for (const e of live) {
           if (e.dead) continue;

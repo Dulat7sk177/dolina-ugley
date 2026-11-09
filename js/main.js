@@ -1,7 +1,7 @@
 // Главный файл: рендер, управление, камера, интерфейс, синхронизация
 import * as THREE from 'three';
-import { CLASSES, ENEMIES, QUESTS, ZONES, ELDER_LINES, WATER_LEVEL } from './config.js';
-import { buildWorld, loadWorldAssets, getHeight, resolveCollision, colliders } from './world.js';
+import { CLASSES, ENEMIES, QUESTS, ZONES, ELDER_LINES, WATER_LEVEL, MAP, MAP_LIST } from './config.js';
+import { buildWorld, loadWorldAssets, getHeight, resolveCollision, colliders, cameraBlocked, useMap } from './maps.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -102,9 +102,11 @@ function placeLabel(el, pos, h, hp, mh, maxDist = 45) {
 
 // ================= Старейшина (NPC) =================
 let elder = null;
-const ELDER_POS = new THREE.Vector3(4.5, 0, 2.5);
-ELDER_POS.y = getHeight(ELDER_POS.x, ELDER_POS.z);
+const ELDER_POS = new THREE.Vector3();
 function spawnElder() {
+  ELDER_POS.set(MAP.elder.x, 0, MAP.elder.z);
+  ELDER_POS.y = getHeight(ELDER_POS.x, ELDER_POS.z);
+  elderLabel.querySelector('.lname').textContent = MAP.elder.name;
   elder = makeCharacter('elder');
   elder.root.position.copy(ELDER_POS);
   elder.root.rotation.y = Math.atan2(-ELDER_POS.x, -ELDER_POS.z) + 0.6;
@@ -199,20 +201,37 @@ document.querySelectorAll('.class-card').forEach((card) => card.addEventListener
 const urlJoin = new URLSearchParams(location.search).get('join');
 if (urlJoin) $('join-code').value = urlJoin.toUpperCase();
 $('btn-host').onclick = () => startGame('host');
-// Загрузка 3D-моделей; кнопки заблокированы, пока не загрузится
+// выбор карты (её выбирает тот, кто создаёт игру)
+let selMap = 'valley';
+try { selMap = localStorage.getItem('rpg-map') || 'valley'; } catch { /* ignore */ }
+$('maps').innerHTML = MAP_LIST.map((m) => `<div class="map-card${m.id === selMap ? ' sel' : ''}" data-map="${m.id}"><b>${esc(m.title)}</b><small>${esc(m.subtitle)}</small></div>`).join('');
+document.querySelectorAll('.map-card').forEach((card) => card.addEventListener('click', () => {
+  document.querySelectorAll('.map-card').forEach((c) => c.classList.remove('sel'));
+  card.classList.add('sel'); selMap = card.dataset.map;
+  try { localStorage.setItem('rpg-map', selMap); } catch { /* ignore */ }
+}));
+// Загрузка персонажей сразу; мир — после выбора карты
 $('btn-host').disabled = $('btn-join').disabled = true;
-{
-  let pm = 0, pw = 0;
-  const prog = () => setStatus(`Загрузка мира… ${Math.round((pm * 0.4 + pw * 0.6) * 100)}%`);
-  Promise.all([
-    loadModels((p) => { pm = p; prog(); }),
-    loadWorldAssets(renderer, scene, (p) => { pw = p; prog(); }),
-  ])
-  .then(() => {
-    world = buildWorld(scene);
-    setStatus(''); $('btn-host').disabled = $('btn-join').disabled = false; spawnElder();
-  })
-  .catch((err) => { console.error(err); setStatus('Не удалось загрузить мир. Запусти игру через start.bat', true); });
+let modelsReady = loadModels((p) => setStatus(`Загрузка персонажей… ${Math.round(p * 100)}%`))
+  .then(() => { setStatus(''); $('btn-host').disabled = $('btn-join').disabled = false; })
+  .catch((err) => { console.error(err); setStatus('Не удалось загрузить персонажей. Запусти игру через start.bat', true); });
+async function loadMap(id) {
+  useMap(id);
+  scene.fog.density = MAP.fog;
+  scene.fog.color.setHex(MAP.fogColor);
+  scene.backgroundIntensity = MAP.bg;
+  scene.environmentIntensity = MAP.envI;
+  renderer.toneMappingExposure = MAP.exposure;
+  bloom.strength = MAP.bloom;
+  $('attrib').textContent = MAP.id === 'astana' ? 'Данные карты © участники OpenStreetMap (ODbL)' : '';
+  await modelsReady;
+  await loadWorldAssets(renderer, scene, (p) => setStatus(`Загрузка карты «${MAP.title}»… ${Math.round(p * 100)}%`));
+  setStatus('Строим мир…');
+  await new Promise((r) => setTimeout(r, 30));
+  world = buildWorld(scene);
+  spawnElder();
+  $('bossbar').querySelector('.bname').textContent = ENEMIES.boss.name;
+  setStatus('');
 }
 $('btn-join').onclick = () => {
   const c = $('join-code').value.trim().toUpperCase();
@@ -232,6 +251,7 @@ async function startGame(mode, code) {
   me.maxMp = me.mp = c.mp; me.maxHp = me.hp = c.hp;
   if (mode === 'host') {
     G.isHost = true; G.myId = 'host';
+    try { await loadMap(selMap); } catch (err) { console.error(err); setStatus('Не удалось загрузить карту', true); busy = false; return; }
     G.sim = new HostSim();
     G.sim.addPlayer('host', me.name, me.cls);
     G.net = new Net();
@@ -263,14 +283,17 @@ function hostOnData(pid, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.t === 'hello') {
     G.sim.addPlayer(pid, String(msg.name || 'Герой').slice(0, 16), CLASSES[msg.cls] ? msg.cls : 'warrior');
-    G.net.sendTo(pid, { t: 'welcome', id: pid });
+    G.net.sendTo(pid, { t: 'welcome', id: pid, map: MAP.id });
     return;
   }
   G.sim.onMessage(pid, msg);
 }
 function clientOnData(msg) {
   if (!msg) return;
-  if (msg.t === 'welcome' && !G.started) { G.myId = msg.id; enterGame(); }
+  if (msg.t === 'welcome' && !G.started && !G.loading) {
+    G.myId = msg.id; G.loading = true;
+    loadMap(msg.map || 'valley').then(enterGame).catch((err) => { console.error(err); setStatus('Не удалось загрузить карту', true); });
+  }
   else if (msg.t === 's' && G.started) applyState(msg);
 }
 function onDisconnect() {
@@ -291,7 +314,7 @@ function enterGame() {
   $('hud').classList.remove('hidden');
   me.rig = makeCharacter(me.cls);
   scene.add(me.rig.root);
-  me.x = (Math.random() - 0.5) * 6; me.z = -4; me.y = getHeight(me.x, me.z);
+  me.x = ZONES.village.x + (Math.random() - 0.5) * 6; me.z = ZONES.village.z - 4; me.y = getHeight(me.x, me.z);
   const z0 = ZONES[QUESTS[0].zone];
   cam.yaw = Math.atan2(z0.x - me.x, z0.z - me.z);
   const ab = CLASSES[me.cls].abilities;
@@ -467,7 +490,7 @@ function updateCamera() {
   for (let d = 0.8; d <= cam.dist; d += 0.2) {
     const qx = tx - fx * d * cp + rx * sh * (d / cam.dist), qz = tz - fz * d * cp + rz * sh * (d / cam.dist), qy = ty + d * sp;
     if (qy - getHeight(qx, qz) > 6) continue; // выше препятствий
-    if (pointBlocked(qx, qy, qz, 0.25)) { dist = Math.max(0.9, d - 0.35); break; }
+    if (cameraBlocked(qx, qy, qz)) { dist = Math.max(0.9, d - 0.35); break; }
     if (qy - getHeight(qx, qz) > 6) continue;
     if (near.some((c) => (qx - c.x) ** 2 + (qz - c.z) ** 2 < (c.r + 0.25) ** 2)) { dist = Math.max(1.2, d - 0.3); break; }
   }
@@ -521,7 +544,7 @@ function handleEvent(ev) {
       for (const v of views.players.values()) { spawnPillar(v.pos.x, v.pos.y, v.pos.z); playCheer(v.rig); fx.spiral(v.pos.x, v.pos.y, v.pos.z, [0xffd760, 0xfff2b0]); }
       break;
     case 'quest': banner(`Задание выполнено: ${ev.title}`); addChat(null, `Задание «${ev.title}» выполнено!`); break;
-    case 'victory': setTimeout(() => banner('Гримвальд Рогатый повержен! Долина спасена!'), 3300); break;
+    case 'victory': setTimeout(() => banner(MAP.victory), 3300); break;
     case 'tp':
       if (ev.id === G.myId) { me.x = ev.x; me.z = ev.z; me.y = getHeight(ev.x, ev.z) + 0.5; me.vy = 0; }
       break;
@@ -698,7 +721,7 @@ function ambient(dt) {
   if (!world) return;
   const cx = G.started ? me.x : 0, cz = G.started ? me.z : 0;
   for (const f of world.flames) {
-    if (Math.hypot(f.x - cx, f.z - cz) > 60) continue;
+    if (Math.hypot(f.x - cx, f.z - cz) > (f.size > 1.2 ? 250 : 60)) continue;
     // языки пламени из частиц
     const pal = f.color === 0x55ff99 || f.color === 0x66ffaa ? FIRE_COLS.green : FIRE_COLS.orange;
     const fr = f.size * dt * 70;
@@ -716,8 +739,9 @@ function ambient(dt) {
     if (f.size >= 1 && Math.random() < dt * 4) fx.smoke.emit(f.x, f.y + 0.8, f.z, rnd() * 0.3, 1.0, rnd() * 0.3, 0x6a6a6a, 0.6, 3, { grow: 0.9, alpha: 0.3 });
   }
   for (const s of world.smokes) {
-    if (Math.hypot(s.x - cx, s.z - cz) > 80) continue;
-    if (Math.random() < dt * 3) fx.smoke.emit(s.x + rnd() * 0.2, s.y, s.z + rnd() * 0.2, 0.3 + rnd() * 0.3, 0.9 + Math.random() * 0.4, rnd() * 0.3, 0xc4c4c4, 0.45, 4, { grow: 0.8, alpha: 0.45 });
+    const sz = s.size || 0.45, far = s.dark ? 350 : 80;
+    if (Math.hypot(s.x - cx, s.z - cz) > far) continue;
+    if (Math.random() < dt * (s.dark ? 5 : 3)) fx.smoke.emit(s.x + rnd() * sz, s.y, s.z + rnd() * sz, 0.4 + rnd() * 0.4, (0.9 + Math.random() * 0.4) * (s.dark ? 2.2 : 1), rnd() * 0.3, s.dark ? 0x2e2c2a : 0xc4c4c4, sz, s.dark ? 7 : 4, { grow: s.dark ? 2.2 : 0.8, alpha: s.dark ? 0.6 : 0.45 });
   }
   for (const l of world.lamps) {
     if (Math.hypot(l.x - cx, l.z - cz) < 40 && Math.random() < dt * 1.5) fx.glow.emit(l.x + rnd() * 0.4, l.y + rnd() * 0.3, l.z + rnd() * 0.4, rnd() * 0.2, 0.15, rnd() * 0.2, 0xffd080, 0.08, 2);
@@ -847,4 +871,4 @@ setInterval(() => {
 }, 50);
 
 // Для отладки из консоли браузера
-window.__game = { G, me, cam, keys, useAbility, scene, fx, setLocked: (v) => { locked = v; } };
+window.__game = { G, me, cam, keys, useAbility, scene, fx, frame: (dt = 0.016) => { updateLocal(dt); updateCamera(); updateViews(dt, performance.now() / 1000); world?.update(performance.now() / 1000); fx.update(dt); composer.render(); }, setLocked: (v) => { locked = v; } };

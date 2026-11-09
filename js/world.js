@@ -99,14 +99,14 @@ function pbr(name, extra = {}) {
   return new THREE.MeshStandardMaterial({ map: T[name].map, normalMap: T[name].normal, roughness: 0.92, metalness: 0, ...extra });
 }
 // Коробка с UV в метрах, чтобы текстура не растягивалась
-function tbox(w, h, d, tile = 2) {
+export function tbox(w, h, d, tile = 2) {
   const g = new THREE.BoxGeometry(w, h, d);
   const uv = g.attributes.uv;
   const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
   for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, (uv.getX(i) * dims[f][0]) / tile, (uv.getY(i) * dims[f][1]) / tile); }
   return g;
 }
-function tcyl(rt, rb, h, seg, tile = 2) {
+export function tcyl(rt, rb, h, seg, tile = 2) {
   const g = new THREE.CylinderGeometry(rt, rb, h, seg);
   const uv = g.attributes.uv, circ = Math.PI * 2 * Math.max(rt, rb);
   for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) * circ) / tile, (uv.getY(i) * h) / tile);
@@ -158,7 +158,7 @@ function canvasTex(w, h, draw) {
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return t;
 }
-function branchTexture(seed) {
+export function branchTexture(seed) {
   const r = mulberry32(seed);
   return canvasTex(256, 512, (g, w, h) => {
     const twig = (x0, y0, ang, len, depth) => {
@@ -186,7 +186,7 @@ function branchTexture(seed) {
     twig(w / 2, h - 4, 0, h - 30, 0);
   });
 }
-function grassTexture() {
+export function grassTexture() {
   const r = mulberry32(77);
   return canvasTex(256, 256, (g, w, h) => {
     for (let i = 0; i < 70; i++) {
@@ -201,7 +201,7 @@ function grassTexture() {
 }
 
 // Ель: ствол с корой + ярусы веток-карточек
-function spruceGeometry(seed) {
+export function spruceGeometry(seed) {
   const r = mulberry32(seed);
   const H = 9 + r() * 3, R = 2.6 + r() * 0.6, levels = 14;
   const trunk = tcyl(0.07, 0.32, H, 7, 1.5); trunk.translate(0, H / 2, 0);
@@ -630,7 +630,7 @@ export function buildWorld(scene) {
 }
 
 // Покачивание на ветру для листвы и травы (amp — сила)
-function windSway(mat, windU, amp) {
+export function windSway(mat, windU, amp) {
   mat.customProgramCacheKey = () => 'wind' + amp;
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = windU.uTime;

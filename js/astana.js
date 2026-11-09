@@ -209,6 +209,8 @@ export function buildWorld(scene) {
   for (const g of [gR, gG, gB]) { g.fillStyle = '#000'; g.fillRect(0, 0, HW, HH); worldTransform(g); g.lineCap = g.lineJoin = 'round'; }
   gG.fillStyle = '#fff';
   for (const gr of city.green) if (gr.k !== 'playground') { pathPoly(gG, gr.p); gG.fill(); }
+  gR.fillStyle = '#fff';
+  for (const pk of city.parking || []) { pathPoly(gR, pk.p); gR.fill(); }
   gR.strokeStyle = gB.strokeStyle = '#fff';
   const FOOT = new Set(['footway', 'cycleway', 'path', 'steps', 'pedestrian']);
   for (const r of city.roads) {
@@ -282,21 +284,34 @@ export function buildWorld(scene) {
   const buckets = new Map([['roof', []], ...Object.keys(mats).map((k) => [k, []])]);
   const tall = [];
   for (const b of city.buildings) {
-    const h = Math.max(3, Math.min(130, b.h));
+    const h = Math.max(3, Math.min(400, b.h)), mh = Math.min(b.mh || 0, h - 1);
     const shape = new THREE.Shape();
     shape.moveTo(b.p[0], -b.p[1]);
     for (let i = 2; i < b.p.length; i += 2) shape.lineTo(b.p[i], -b.p[i + 1]);
     let geo;
-    try { geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false }); } catch { continue; }
+    try { geo = new THREE.ExtrudeGeometry(shape, { depth: h - mh, bevelEnabled: false }); } catch { continue; }
     geo.rotateX(-Math.PI / 2);
+    if (mh) geo.translate(0, mh, 0);
     const [caps, sides] = splitExtrude(geo);
     geo.dispose();
     const hv = ((b.p[0] * 13 + b.p[1] * 7) | 0) & 7;
     const style = h >= 45 || ((b.k === 'office' || b.k === 'hotel' || b.k === 'commercial') && h > 20) ? 'glass' : b.k === 'apartments' || b.k === 'residential' || h > 18 ? 'panel' + (hv % 3) : 'low' + (hv % 2);
     if (sides) buckets.get(style).push(sides);
     if (caps) buckets.get('roof').push(caps);
-    addPoly(b.p, h);
+    if (mh < 2.5) addPoly(b.p, h);
     if (h > 30) tall.push({ b, h });
+    // техника на крыше: вентиляция, лифтовые будки, антенны
+    if (h > 12) {
+      let cx = 0, cz = 0; const n = b.p.length / 2; for (let k = 0; k < b.p.length; k += 2) { cx += b.p[k]; cz += b.p[k + 1]; } cx /= n; cz /= n;
+      const cnt = 1 + Math.floor(rng() * 3);
+      for (let k = 0; k < cnt; k++) {
+        const x = cx + (rng() - 0.5) * 8, z = cz + (rng() - 0.5) * 8;
+        if (!pip(b.p, x, z)) continue;
+        const w = 1.5 + rng() * 3, hh = 1 + rng() * 2.2, d = 1.5 + rng() * 3;
+        buckets.get('roof').push(tbox(w, hh, d, 2).translate(x, h + hh / 2, z).toNonIndexed());
+        if (rng() < 0.25) buckets.get('roof').push(tcyl(0.06, 0.08, 4 + rng() * 6, 4, 2).translate(x + w / 2, h + 3, z).toNonIndexed());
+      }
+    }
   }
   for (const [k, geos] of buckets) {
     if (!geos.length) continue;
@@ -336,7 +351,7 @@ export function buildWorld(scene) {
     const g = spruceGeometry(sd);
     const leafMat = new THREE.MeshStandardMaterial({ map: branchTexture(sd * 7), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.95 });
     windSway(leafMat, windU, 0.04);
-    const N = 600, tr = new THREE.InstancedMesh(g.trunk, barkMat, N), lf = new THREE.InstancedMesh(g.foliage, leafMat, N);
+    const N = 1500, tr = new THREE.InstancedMesh(g.trunk, barkMat, N), lf = new THREE.InstancedMesh(g.foliage, leafMat, N);
     tr.castShadow = lf.castShadow = true; tr.receiveShadow = lf.receiveShadow = true;
     scene.add(tr, lf);
     return { tr, lf, n: 0, N };
@@ -358,6 +373,22 @@ export function buildWorld(scene) {
   for (let tries = 0, k = 0; k < 1500 && tries < 60000; tries++) {
     const x = (rng() - 0.5) * BX * 2, z = (rng() - 0.5) * BZ * 2;
     if (isGreen(x, z) && rng() < 0.6) { plantTree(x, z); k++; }
+  }
+  // аллеи вдоль улиц
+  const inBuilding = (x, z) => { let hit = false; forNear(x, z, (it) => { if (!hit && it.r === undefined && x > it.x0 && x < it.x1 && z > it.z0 && z < it.z1 && pip(it.p, x, z)) hit = true; }); return hit; };
+  const isRoad = (x, z) => { const ix = ((x + BX) / RES) | 0, iz = ((z + BZ) / RES) | 0; if (ix < 0 || iz < 0 || ix >= HW || iz >= HH) return true; return sp[(iz * HW + ix) * 4] > 60; };
+  for (const r of city.roads) {
+    if (!['primary', 'secondary', 'tertiary', 'residential'].includes(r.t) || r.b || r.tn) continue;
+    for (let i = 0; i + 3 < r.p.length; i += 2) {
+      const ax = r.p[i], az = r.p[i + 1], bx = r.p[i + 2], bz = r.p[i + 3], len = Math.hypot(bx - ax, bz - az);
+      if (len < 1) continue;
+      const ux = (bx - ax) / len, uz = (bz - az) / len;
+      for (let d = 6; d < len; d += 13) for (const side of [-1, 1]) {
+        const off = r.w / 2 + 3.5, x = ax + ux * d - uz * off * side, z = az + uz * d + ux * off * side;
+        if (Math.abs(x) > BX - 5 || Math.abs(z) > BZ - 5 || isRoad(x, z) || inBuilding(x, z) || rng() < 0.3) continue;
+        plantTree(x, z);
+      }
+    }
   }
   for (const v of variants) { v.tr.count = v.lf.count = v.n; v.tr.computeBoundingSphere(); v.lf.computeBoundingSphere(); }
 
@@ -410,11 +441,11 @@ export function buildWorld(scene) {
   ]);
   const carMat = new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.35 });
   const darkMat = new THREE.MeshStandardMaterial({ color: 0x15181a, roughness: 0.4, metalness: 0.3 });
-  const NC = 420, carIM = new THREE.InstancedMesh(carBodyGeo, carMat, NC), darkIM = new THREE.InstancedMesh(carDarkGeo, darkMat, NC);
+  const NC = 1600, carIM = new THREE.InstancedMesh(carBodyGeo, carMat, NC), darkIM = new THREE.InstancedMesh(carDarkGeo, darkMat, NC);
   const carCols = [0x4a4f54, 0x6b6e70, 0x7a3a2c, 0x2c3a4a, 0x8a8478, 0x3a3a36, 0x5a4a3a, 0xa8a8a2].map((h) => new THREE.Color(h));
   let nc = 0;
   const majors = city.roads.filter((r) => ['primary', 'secondary', 'tertiary', 'residential', 'service'].includes(r.t) && !r.tn);
-  for (let tries = 0; nc < NC && tries < 6000; tries++) {
+  for (let tries = 0; nc < 450 && tries < 6000; tries++) {
     const r = majors[Math.floor(rng() * majors.length)];
     const i = Math.floor(rng() * (r.p.length / 2 - 1)) * 2;
     const ax = r.p[i], az = r.p[i + 1], bx = r.p[i + 2], bz = r.p[i + 3], len = Math.hypot(bx - ax, bz - az);
@@ -434,8 +465,90 @@ export function buildWorld(scene) {
     addCircle(x + Math.sin(ry) * 1.2, z + Math.cos(ry) * 1.2, 1.05); addCircle(x - Math.sin(ry) * 1.2, z - Math.cos(ry) * 1.2, 1.05);
     if (burnt) { flames.push({ meshes: [], light: null, o: rng() * 10, x, y: y + 1.2, z, color: 0xff8a30, size: 0.8 }); smokes.push({ x, y: y + 2, z, dark: 1, size: 1.4 }); }
   }
+  // ряды машин на парковках
+  for (const pk of city.parking || []) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i < pk.p.length; i += 2) { x0 = Math.min(x0, pk.p[i]); x1 = Math.max(x1, pk.p[i]); z0 = Math.min(z0, pk.p[i + 1]); z1 = Math.max(z1, pk.p[i + 1]); }
+    const alongX = x1 - x0 > z1 - z0;
+    for (let a = (alongX ? x0 : z0) + 1.5; a < (alongX ? x1 : z1) - 1.5 && nc < NC; a += 2.8) {
+      for (let b = (alongX ? z0 : x0) + 3; b < (alongX ? z1 : x1) - 3 && nc < NC; b += 6.5) {
+        const x = alongX ? a : b, z = alongX ? b : a;
+        if (rng() > 0.62 || !pip(pk.p, x, z) || nearZone(x, z, 0)) continue;
+        const ry = (alongX ? 0 : Math.PI / 2) + (rng() < 0.5 ? Math.PI : 0) + (rng() - 0.5) * 0.15, y = getHeight(x, z);
+        mat4(x, y, z, ry, 1);
+        carIM.setMatrixAt(nc, m4); darkIM.setMatrixAt(nc, m4);
+        carIM.setColorAt(nc, carCols[Math.floor(rng() * carCols.length)]);
+        nc++;
+        addCircle(x + Math.sin(ry) * 1.2, z + Math.cos(ry) * 1.2, 1.05); addCircle(x - Math.sin(ry) * 1.2, z - Math.cos(ry) * 1.2, 1.05);
+      }
+    }
+  }
   carIM.count = darkIM.count = nc; carIM.castShadow = darkIM.castShadow = true;
   scene.add(carIM, darkIM);
+
+  // ---------- остановки, светофоры, скамейки, заборы ----------
+  {
+    const metal = new THREE.MeshStandardMaterial({ color: 0x4a4e52, metalness: 0.6, roughness: 0.45 });
+    const glassM = new THREE.MeshStandardMaterial({ color: 0x9fb4bf, metalness: 0.3, roughness: 0.1, transparent: true, opacity: 0.45 });
+    const stopGeo = mergeGeometries([
+      tbox(4.2, 0.12, 1.8, 2).translate(0, 2.6, 0).toNonIndexed(),
+      ...[[-2, -0.8], [2, -0.8], [-2, 0.8], [2, 0.8]].map(([x, z]) => tcyl(0.05, 0.05, 2.6, 6, 1).translate(x, 1.3, z).toNonIndexed()),
+      tbox(3.6, 0.1, 0.45, 1).translate(0, 0.5, -0.5).toNonIndexed(),
+    ]);
+    const stopGlass = tbox(4.0, 1.9, 0.04, 2).translate(0, 1.45, -0.85);
+    // направление ближайшей дороги — чтобы остановки и светофоры стояли вдоль неё
+    const majorRoads = city.roads.filter((r) => !FOOT.has(r.t));
+    const roadAngle = (x, z) => {
+      let best = 1e9, ang = 0;
+      for (const r of majorRoads) for (let i = 0; i + 3 < r.p.length; i += 2) {
+        const ax = r.p[i], az = r.p[i + 1], bx = r.p[i + 2], bz = r.p[i + 3];
+        if (Math.abs(ax - x) > 80 && Math.abs(bx - x) > 80) continue;
+        const dx = bx - ax, dz = bz - az, l = dx * dx + dz * dz || 1, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l));
+        const d = Math.hypot(x - ax - dx * t, z - az - dz * t);
+        if (d < best) { best = d; ang = Math.atan2(dx, dz); }
+      }
+      return ang;
+    };
+    const st = city.stops || [], nS = st.length / 2;
+    if (nS) {
+      const stopIM = new THREE.InstancedMesh(stopGeo, metal, nS), sgIM = new THREE.InstancedMesh(stopGlass, glassM, nS);
+      for (let i = 0; i < nS; i++) { const x = st[i * 2], z = st[i * 2 + 1], ry = roadAngle(x, z) + Math.PI / 2; mat4(x, getHeight(x, z), z, ry, 1); stopIM.setMatrixAt(i, m4); sgIM.setMatrixAt(i, m4); addCircle(x, z, 1.4); }
+      stopIM.castShadow = true; scene.add(stopIM, sgIM);
+    }
+    const sig = city.signals || [], nT = sig.length / 2;
+    if (nT) {
+      const sigGeo = mergeGeometries([tcyl(0.08, 0.1, 4.2, 6, 1).translate(0, 2.1, 0).toNonIndexed(), tbox(0.4, 1.1, 0.35, 1).translate(0, 4.4, 0.15).toNonIndexed()]);
+      const sigIM = new THREE.InstancedMesh(sigGeo, new THREE.MeshStandardMaterial({ color: 0x23272a, roughness: 0.5, metalness: 0.4 }), nT);
+      for (let i = 0; i < nT; i++) { const x = sig[i * 2], z = sig[i * 2 + 1]; sigIM.setMatrixAt(i, mat4(x, getHeight(x, z), z, roadAngle(x, z), 1)); addCircle(x, z, 0.2); }
+      sigIM.castShadow = true; scene.add(sigIM);
+    }
+    const be = city.benches || [], nB = be.length / 2;
+    if (nB) {
+      const benchGeo = mergeGeometries([tbox(1.8, 0.08, 0.45, 1).translate(0, 0.45, 0).toNonIndexed(), tbox(1.8, 0.4, 0.06, 1).translate(0, 0.72, -0.2).toNonIndexed(), tbox(0.08, 0.45, 0.4, 1).translate(-0.8, 0.22, 0).toNonIndexed(), tbox(0.08, 0.45, 0.4, 1).translate(0.8, 0.22, 0).toNonIndexed()]);
+      const benchIM = new THREE.InstancedMesh(benchGeo, new THREE.MeshStandardMaterial({ map: T.bark_brown_02.map, roughness: 0.9 }), nB);
+      for (let i = 0; i < nB; i++) { const x = be[i * 2], z = be[i * 2 + 1]; benchIM.setMatrixAt(i, mat4(x, getHeight(x, z), z, rng() * 6.28, 1)); }
+      scene.add(benchIM);
+    }
+    // заборы-решётки по OSM
+    const fenceGeo = [], fenceMat = new THREE.MeshStandardMaterial({ color: 0x2c2f31, metalness: 0.6, roughness: 0.5 });
+    let fc = 0;
+    for (const fz of city.fences || []) {
+      for (let i = 0; i + 3 < fz.p.length && fc < 6000; i += 2) {
+        const ax = fz.p[i], az = fz.p[i + 1], bx = fz.p[i + 2], bz = fz.p[i + 3], len = Math.hypot(bx - ax, bz - az);
+        if (len < 0.3 || Math.abs(ax) > BX || Math.abs(az) > BZ) continue;
+        const ang = Math.atan2(bx - ax, bz - az), cx = (ax + bx) / 2, cz = (az + bz) / 2, y = getHeight(cx, cz), hh = fz.t ? 2.2 : 1.6;
+        for (const yy of [0.15, hh - 0.1]) { const rl = tbox(0.06, 0.06, len, 1); rl.rotateY(ang); rl.translate(cx, y + yy, cz); fenceGeo.push(rl.toNonIndexed()); }
+        let n2 = 0;
+        for (let d = 0; d < len; d += 1.2) {
+          const px = ax + (bx - ax) * (d / len), pz = az + (bz - az) * (d / len);
+          fenceGeo.push(tbox(0.05, hh, 0.05, 1).translate(px, y + hh / 2, pz).toNonIndexed());
+          if (n2++ % 2 === 0) addCircle(px, pz, 0.45);
+          fc++;
+        }
+      }
+    }
+    if (fenceGeo.length) { const fm = new THREE.Mesh(mergeGeometries(fenceGeo), fenceMat); fm.castShadow = true; scene.add(fm); }
+  }
 
   // ---------- Байтерек ----------
   {

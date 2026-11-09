@@ -60,7 +60,7 @@ const MAPS = {
     victory: 'Гримвальд Рогатый повержен! Долина спасена!',
   },
   astana: {
-    id: 'astana', title: 'Астана: Мёртвый город', subtitle: 'Зомби-апокалипсис на левом берегу', waterLevel: -1.3, fog: 0.0013, fogColor: 0x5f5c57, bg: 0.22, envI: 0.6, exposure: 0.85, bloom: 0.18,
+    id: 'astana', title: 'Астана: Мёртвый город', subtitle: 'Зомби-апокалипсис на левом берегу', waterLevel: -1.3, fog: 0.00085, fogColor: 0x5f5c57, far: 1600, bg: 0.22, envI: 0.6, exposure: 0.85, bloom: 0.18,
     elder: { x: 7, z: 52, name: 'Выживший Ерлан' },
     names: { minion: 'Заражённый', wolf: 'Бешеный пёс', skeleton: 'Тёмный рыцарь', boss: 'Мутант «Альфа»' },
     zones: {
@@ -69,6 +69,16 @@ const MAPS = {
       ruins: { name: 'Хан Шатыр', x: -1530, z: -505, r: 40, enemy: 'skeleton', count: 8 },
       forest: { name: 'Северный парк', x: 567, z: -780, r: 35, enemy: 'wolf', count: 7 },
       arena: { name: 'Площадь Ак Орды', x: 950, z: 260, r: 35, enemy: 'boss', count: 1 },
+      // бродячие заражённые по всему городу (без заданий)
+      s1: { name: 'Улицы', x: 160, z: -240, r: 45, enemy: 'minion', count: 4 },
+      s2: { name: 'Улицы', x: -170, z: 280, r: 45, enemy: 'minion', count: 4 },
+      s3: { name: 'Улицы', x: 430, z: 60, r: 45, enemy: 'minion', count: 4 },
+      s4: { name: 'Улицы', x: -650, z: 170, r: 45, enemy: 'minion', count: 4 },
+      s5: { name: 'Улицы', x: -950, z: -280, r: 45, enemy: 'minion', count: 4 },
+      s6: { name: 'Улицы', x: 300, z: 520, r: 45, enemy: 'minion', count: 4 },
+      s7: { name: 'Улицы', x: 720, z: -260, r: 45, enemy: 'minion', count: 4 },
+      s8: { name: 'Улицы', x: -1150, z: 120, r: 45, enemy: 'minion', count: 4 },
+      s9: { name: 'Улицы', x: 640, z: 330, r: 45, enemy: 'wolf', count: 3 },
     },
     quests: [
       { title: 'Зачистка бульвара', desc: 'Перебей заражённых на бульваре Нуржол', zone: 'goblins', type: 'minion', need: 10, reward: 200 },

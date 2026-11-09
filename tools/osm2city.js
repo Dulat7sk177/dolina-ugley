@@ -1,8 +1,9 @@
 // Конвертер OpenStreetMap → компактная карта города для игры
-// node tools/osm2city.js <osm.json> <out.json>
+// node tools/osm2city.js <out.json> <osm1.json> [osm2.json ...]
 const fs = require('fs');
-const [, , inFile, outFile] = process.argv;
-const j = JSON.parse(fs.readFileSync(inFile));
+const [, , outFile, ...inFiles] = process.argv;
+const seen = new Set();
+const j = { elements: inFiles.flatMap((f) => JSON.parse(fs.readFileSync(f)).elements).filter((e) => { const k = e.type + e.id; if (seen.has(k)) return false; seen.add(k); return true; }) };
 const LAT0 = 51.128207, LON0 = 71.430411; // Байтерек — центр карты
 const MX = 111320 * Math.cos((LAT0 * Math.PI) / 180), MZ = 110574;
 const BX = 2000, BZ = 1150; // границы карты (м)
@@ -14,11 +15,34 @@ const centroid = (pts) => { let x = 0, z = 0; const n = pts.length / 2; for (let
 const ring = (geom) => { const out = []; for (const g of geom) { const [x, z] = P(g); out.push(x, z); } if (out.length > 2 && out[0] === out[out.length - 2] && out[1] === out[out.length - 1]) out.length -= 2; return out; };
 
 const W = { motorway: 20, trunk: 18, primary: 16, secondary: 13, tertiary: 10, primary_link: 8, secondary_link: 7, tertiary_link: 7, residential: 7, unclassified: 7, living_street: 6, service: 4.5, pedestrian: 8, busway: 7, footway: 2.5, cycleway: 2, path: 1.6, steps: 2.5 };
-const out = { origin: [LAT0, LON0], bounds: [BX, BZ], buildings: [], roads: [], water: [], green: [], trees: [], landmarks: {} };
+const out = { origin: [LAT0, LON0], bounds: [BX, BZ], buildings: [], roads: [], water: [], green: [], trees: [], parking: [], fences: [], stops: [], signals: [], benches: [], landmarks: {} };
+const pip = (p, x, z) => { let ins = false; for (let i = 0, k = p.length - 2; i < p.length; k = i, i += 2) { if ((p[i + 1] > z) !== (p[k + 1] > z) && x < ((p[k] - p[i]) * (z - p[i + 1])) / (p[k + 1] - p[i + 1]) + p[i]) ins = !ins; } return ins; };
+const parts = [];
 
 let akorda = null, khan = null;
 for (const e of j.elements) {
   const t = e.tags || {};
+  if (t['building:part'] && (e.type === 'way' || e.type === 'relation')) {
+    let pts;
+    if (e.type === 'way') pts = ring(e.geometry);
+    else { const outers = (e.members || []).filter((m) => m.role === 'outer' && m.geometry).map((m) => ring(m.geometry)); outers.sort((a, b) => Math.abs(area(b)) - Math.abs(area(a))); pts = outers[0]; }
+    if (!pts || pts.length < 6) continue;
+    const [cx, cz] = centroid(pts);
+    if (!inside(cx, cz) || Math.abs(area(pts)) < 6) continue;
+    const lv = parseFloat(t['building:levels']);
+    const h = parseFloat(t.height) || (lv ? lv * 3.3 + 1 : 0);
+    if (!h) continue;
+    const mh = parseFloat(t.min_height) || (parseFloat(t['building:min_level']) || 0) * 3.3;
+    parts.push({ p: pts, h: Math.round(h * 10) / 10, mh: mh ? Math.round(mh * 10) / 10 : undefined, k: 'part', cx, cz });
+    continue;
+  }
+  if (t.amenity === 'parking' && e.type === 'way' && e.geometry) { const pts = ring(e.geometry); const [cx, cz] = centroid(pts); if (pts.length >= 6 && inside(cx, cz)) out.parking.push({ p: pts }); continue; }
+  if (t.barrier && /fence|wall/.test(t.barrier) && e.type === 'way' && e.geometry) { const pts = e.geometry.map(P).flat(); if (inside(pts[0], pts[1], 50)) out.fences.push({ t: t.barrier === 'fence' ? 0 : 1, p: pts }); continue; }
+  if (e.type === 'node' && (t.highway === 'bus_stop' || t.highway === 'traffic_signals' || t.amenity === 'bench')) {
+    const [x, z] = P(e); if (!inside(x, z)) continue;
+    (t.highway === 'bus_stop' ? out.stops : t.highway === 'traffic_signals' ? out.signals : out.benches).push(x, z);
+    continue;
+  }
   if (t.building && (e.type === 'way' || e.type === 'relation')) {
     let pts;
     if (e.type === 'way') pts = ring(e.geometry);
@@ -57,6 +81,13 @@ for (const e of j.elements) {
     if (inside(x, z)) out.trees.push(x, z);
   }
 }
+// контуры комплексов, у которых есть «части», не рисуем — вместо них настоящие башни
+const before = out.buildings.length;
+out.buildings = out.buildings.filter((b) => !parts.some((pt) => pip(b.p, pt.cx, pt.cz)));
+const skipNear = (x, z) => Math.hypot(x, z) < 30 || (akorda && Math.hypot(x - akorda.x, z - akorda.z) < 70) || (khan && Math.hypot(x - khan.x, z - khan.z) < 110);
+for (const pt of parts) if (!skipNear(pt.cx, pt.cz)) { delete pt.cx; delete pt.cz; out.buildings.push(pt); }
+console.log('outlines replaced by parts:', before - (out.buildings.length - parts.length), 'parts:', parts.length);
 out.landmarks = { baiterek: { x: 0, z: 0 }, akorda, khan };
 fs.writeFileSync(outFile, JSON.stringify(out));
+console.log('parking', out.parking.length, 'fences', out.fences.length, 'stops', out.stops.length / 2, 'signals', out.signals.length / 2, 'benches', out.benches.length / 2);
 console.log('buildings', out.buildings.length, 'roads', out.roads.length, 'water', out.water.length, 'green', out.green.length, 'trees', out.trees.length / 2, 'akorda', akorda && [akorda.x | 0, akorda.z | 0], 'khan', khan && [khan.x | 0, khan.z | 0]);

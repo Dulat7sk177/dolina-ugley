@@ -223,6 +223,7 @@ async function loadMap(id) {
   scene.environmentIntensity = MAP.envI;
   renderer.toneMappingExposure = MAP.exposure;
   bloom.strength = MAP.bloom;
+  camera.far = MAP.far || 600; camera.updateProjectionMatrix();
   $('attrib').textContent = MAP.id === 'astana' ? 'Данные карты © участники OpenStreetMap (ODbL)' : '';
   await modelsReady;
   await loadWorldAssets(renderer, scene, (p) => setStatus(`Загрузка карты «${MAP.title}»… ${Math.round(p * 100)}%`));

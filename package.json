@@ -1,0 +1,9 @@
+{
+  "name": "dolina-uglei",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Кооперативная 3D RPG в браузере (Three.js + PeerJS)",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

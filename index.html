@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Долина Углей</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Philosopher:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="game"></div>
+  <div id="labels"></div>
+  <div id="hurt"></div>
+
+  <!-- ===== Игровой интерфейс ===== -->
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="party"></div>
+    <div id="topright">
+      <div id="room"></div>
+      <div id="quest">
+        <div class="qlabel">Задание</div>
+        <div id="qtitle"></div>
+        <div id="qdesc"></div>
+        <div id="qprog"></div>
+      </div>
+    </div>
+    <div id="compass"><div id="carrow">▲</div><div id="cdist"></div></div>
+    <div id="bossbar" class="hidden"><div class="bname">Гримвальд Рогатый</div><div class="bbar"><i></i></div></div>
+    <div id="bottom-left">
+      <div id="chat">
+        <div id="chat-log"></div>
+        <input id="chat-input" class="hidden" maxlength="200" placeholder="Сообщение… (Enter — отправить, Esc — отмена)" autocomplete="off">
+      </div>
+      <div id="stats">
+        <div id="lvl">1</div>
+        <div class="bars">
+          <div class="bar hp"><i></i><span></span></div>
+          <div class="bar mp"><i></i><span></span></div>
+          <div class="bar xp"><i></i><span></span></div>
+        </div>
+      </div>
+    </div>
+    <div id="abilities"></div>
+    <div id="banner"></div>
+    <div id="center-msg"></div>
+    <div id="pause">
+      <div class="pbox">
+        <h2>Пауза</h2>
+        <p class="click">Кликни, чтобы играть</p>
+        <div class="controls">
+          <div><kbd>W A S D</kbd> движение</div>
+          <div><kbd>Мышь</kbd> обзор, <kbd>колесо</kbd> зум</div>
+          <div><kbd>ЛКМ</kbd> атака</div>
+          <div><kbd>Q</kbd> / <kbd>ПКМ</kbd> умение 1</div>
+          <div><kbd>F</kbd> умение 2</div>
+          <div><kbd>R</kbd> выпить зелье</div>
+          <div><kbd>E</kbd> (держать) поднять союзника</div>
+          <div><kbd>Shift</kbd> бег, <kbd>Пробел</kbd> прыжок, ещё раз в воздухе — сальто</div>
+          <div><kbd>Enter</kbd> чат, <kbd>Esc</kbd> пауза</div>
+        </div>
+        <div id="ability-help"></div>
+      </div>
+    </div>
+    <div id="disconnect" class="hidden">
+      <div class="pbox"><h2>Связь с хостом потеряна</h2><button onclick="location.reload()">В меню</button></div>
+    </div>
+  </div>
+
+  <!-- ===== Лобби ===== -->
+  <div id="lobby">
+    <div class="panel">
+      <h1>Долина Углей</h1>
+      <p class="sub">Кооперативная 3D RPG</p>
+      <label for="name">Имя героя</label>
+      <input id="name" maxlength="16" placeholder="Герой">
+      <label>Класс</label>
+      <div class="classes">
+        <div class="class-card sel" data-cls="warrior">
+          <div class="ci">🛡️</div><b>Воин</b>
+          <small>Много здоровья, ближний бой. Вихрь и Глухая оборона.</small>
+        </div>
+        <div class="class-card" data-cls="mage">
+          <div class="ci">🔮</div><b>Маг</b>
+          <small>Огненные шары, лечение отряда, ледяная волна.</small>
+        </div>
+      </div>
+      <button id="btn-host" class="primary">Создать игру</button>
+      <div class="or">или войти к другу</div>
+      <div class="join">
+        <input id="join-code" maxlength="8" placeholder="Код комнаты">
+        <button id="btn-join">Войти</button>
+      </div>
+      <div id="status"></div>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

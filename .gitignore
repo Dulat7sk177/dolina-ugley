@@ -1,0 +1,5 @@
+# старые мультяшные модели больше не используются
+assets/models/
+.claude/
+node_modules/
+*.tmp

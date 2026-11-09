@@ -11,6 +11,8 @@ export let loadWorldAssets = valley.loadWorldAssets;
 export let buildWorld = valley.buildWorld;
 export let cameraBlocked = (x, y, z) => towerBlocked(x, y, z, 0.25);
 export let currentMap = 'valley';
+export let roofAt = () => -Infinity;
+export let doors = [];
 
 export function useMap(id) {
   setMap(id);
@@ -21,5 +23,7 @@ export function useMap(id) {
   colliders = m.colliders;
   loadWorldAssets = m.loadWorldAssets;
   buildWorld = m.buildWorld;
+  roofAt = currentMap === 'astana' ? astana.roofAt : () => -Infinity;
+  doors = currentMap === 'astana' ? astana.doors : [];
   cameraBlocked = currentMap === 'astana' ? astana.cameraBlocked : (x, y, z) => towerBlocked(x, y, z, 0.25);
 }

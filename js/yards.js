@@ -26,7 +26,7 @@ class Batch {
 const parts = (...list) => { const m = new Map(); for (const [mat, geo] of list) { if (!m.has(mat)) m.set(mat, []); m.get(mat).push(ni(geo)); } for (const [k, v] of m) m.set(k, mergeGeometries(v)); return m; };
 
 export function buildYards(ctx) {
-  const { scene, city, rng, getHeight, addCircle, pip, M, T, isRoad, inBuilding, nearZone } = ctx;
+  const { scene, city, rng, getHeight, addCircle, pip, M, T, isRoad, inBuilding, nearZone, doors } = ctx;
   const B = new Batch();
   const C = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.75, ...o });
   const mat = {
@@ -152,11 +152,14 @@ export function buildYards(ctx) {
     if ((mx + nx - cx) ** 2 + (mz + nz - cz) ** 2 < (mx - nx - cx) ** 2 + (mz - nz - cz) ** 2) { nx = -nx; nz = -nz; }
     const cnt = Math.max(1, Math.min(8, Math.floor(e.len / 16)));
     const face = Math.atan2(nx, nz);
+    // точка на крыше этого дома — для выхода через люк
+    const roof = pip(b.p, cx, cz) ? { x: cx, z: cz, h: b.h } : { x: mx - nx * 3, z: mz - nz * 3, h: b.h };
     for (let k = 0; k < cnt; k++) {
       const t = (k + 0.5) / cnt, x = e.ax + (e.bx - e.ax) * t, z = e.az + (e.bz - e.az) * t;
       if (isRoad(x + nx * 2, z + nz * 2)) continue;
       const y = getHeight(x, z);
       B.place(DOOR, x, y, z, face);
+      doors?.push({ x: x + nx * 1.7, z: z + nz * 1.7, kind: 'stair', face, roof });
       addCircle(x + nx * 1.45 + Math.sin(e.ang) * 1.15, z + nz * 1.45 + Math.cos(e.ang) * 1.15, 0.12);
       addCircle(x + nx * 1.45 - Math.sin(e.ang) * 1.15, z + nz * 1.45 - Math.cos(e.ang) * 1.15, 0.12);
       if (rng() < 0.6) { const bx = x + nx * 2.6 + Math.sin(e.ang) * 2.4, bz = z + nz * 2.6 + Math.cos(e.ang) * 2.4; B.place(BENCH, bx, y, bz, face); }

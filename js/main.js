@@ -1,7 +1,8 @@
 // Главный файл: рендер, управление, камера, интерфейс, синхронизация
 import * as THREE from 'three';
 import { CLASSES, ENEMIES, QUESTS, ZONES, ELDER_LINES, WATER_LEVEL, MAP, MAP_LIST } from './config.js';
-import { buildWorld, loadWorldAssets, getHeight, resolveCollision, colliders, cameraBlocked, useMap } from './maps.js';
+import { buildWorld, loadWorldAssets, getHeight, resolveCollision, colliders, cameraBlocked, useMap, roofAt, doors } from './maps.js';
+import { SPAWN, EXITS } from './interiors.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -343,6 +344,7 @@ addEventListener('keydown', (e) => {
   if (e.repeat) return;
   keys[e.code] = true;
   if (e.code === 'Space') tryJump();
+  if (e.code === 'KeyE') tryInteract();
   if (e.code === 'Enter') { e.preventDefault(); openChat(); }
   else if (e.code === 'KeyQ') useAbility('q');
   else if (e.code === 'KeyF') useAbility('f');
@@ -431,6 +433,46 @@ function applyFlip(rig, t, dt, pos) {
   return t;
 }
 
+// ===== Вход в здания: двери снаружи, выходы внутри =====
+const DOOR_NAMES = { stair: 'войти в подъезд', shop: 'войти в магазин' };
+function nearestInteract() {
+  if (me.downed) return null;
+  for (const v of views.players.values()) if (v.d && Math.hypot(v.pos.x - me.x, v.pos.z - me.z) < 2.6) return null; // приоритет — поднять друга
+  if (me.y > 500) {
+    let best = null, bd = 2.0;
+    for (const ex of EXITS) { const d = Math.hypot(ex.x - me.x, ex.z - me.z) + Math.abs(ex.y - me.y) * 0.5; if (d < bd) { bd = d; best = ex; } }
+    return best && { type: 'exit', ex: best, label: best.label };
+  }
+  let best = null, bd = 2.4;
+  for (const d of doors) { const dist = Math.hypot(d.x - me.x, d.z - me.z); if (dist < bd) { bd = dist; best = d; } }
+  return best && { type: 'door', door: best, label: DOOR_NAMES[best.kind] };
+}
+function teleport(x, y, z, yaw) {
+  me.x = x; me.y = y; me.z = z; me.vy = 0; me.onGround = true;
+  if (yaw !== undefined) { cam.yaw = yaw; me.ry = yaw; }
+  cam.cur = undefined;
+  fx.burst(x, y + 1, z, 16, [0xffffff, 0xcfe4ff], 2, 0.2, 0.4, { drag: 2 });
+}
+function tryInteract() {
+  if (!G.started || G.chatOpen) return;
+  const it = nearestInteract();
+  if (!it) return;
+  if (it.type === 'door') {
+    me.ret = it.door;
+    const sp = SPAWN[it.door.kind];
+    teleport(sp.x, sp.y, sp.z, sp.ry);
+    addChat(null, it.door.kind === 'shop' ? 'Вы в разграбленном магазине. Ищите аптечки!' : 'Вы в подъезде. Наверху люк на крышу.');
+  } else if (it.ex.kind === 'roof') {
+    const r = me.ret?.roof;
+    if (r) { teleport(r.x, r.h + 0.05, r.z); addChat(null, 'Вы на крыше. Прыгайте вниз, если не боитесь!'); }
+    else { const v = ZONES.village; teleport(v.x, getHeight(v.x, v.z), v.z); }
+  } else {
+    const d = me.ret;
+    if (d) teleport(d.x, getHeight(d.x, d.z), d.z, d.face);
+    else { const v = ZONES.village; teleport(v.x, getHeight(v.x, v.z), v.z); }
+  }
+}
+
 function usePotion() {
   if (me.downed || me.cds.r > 0) return;
   if (me.potions <= 0) { addChat(null, 'Нет зелий — их роняют враги'); return; }
@@ -472,7 +514,7 @@ function updateLocal(dt) {
   resolveBoxes(me, 0.4, me.y);
   const ceil = ceilingAt(me.x, me.z, me.y);
   if (me.y + 1.85 > ceil && me.vy > 0) { me.y = ceil - 1.85; me.vy = 0; }
-  const ground = Math.max(getHeight(me.x, me.z), surfaceAt(me.x, me.z, me.y));
+  const ground = Math.max(getHeight(me.x, me.z), surfaceAt(me.x, me.z, me.y), roofAt(me.x, me.z, me.y));
   if (me.y <= ground) { me.y = ground; me.vy = 0; me.onGround = true; me.jumps = 0; }
   else if (me.onGround && me.vy <= 0 && me.y - ground < 0.45) { me.y = ground; me.vy = 0; } // спуск по ступенькам
   else me.onGround = false;
@@ -490,7 +532,6 @@ function updateCamera() {
   const near = colliders.filter((c) => Math.abs(c.x - tx) < cam.dist + c.r + 1 && Math.abs(c.z - tz) < cam.dist + c.r + 1);
   for (let d = 0.8; d <= cam.dist; d += 0.2) {
     const qx = tx - fx * d * cp + rx * sh * (d / cam.dist), qz = tz - fz * d * cp + rz * sh * (d / cam.dist), qy = ty + d * sp;
-    if (qy - getHeight(qx, qz) > 6) continue; // выше препятствий
     if (cameraBlocked(qx, qy, qz)) { dist = Math.max(0.9, d - 0.35); break; }
     if (qy - getHeight(qx, qz) > 6) continue;
     if (near.some((c) => (qx - c.x) ** 2 + (qz - c.z) ** 2 < (c.r + 0.25) ** 2)) { dist = Math.max(1.2, d - 0.3); break; }
@@ -626,13 +667,13 @@ function applyState(s) {
   }
   prune(views.proj, (v) => scene.remove(v.g));
 
-  for (const [id, x, z] of s.dr) {
+  for (const [id, x, z, dy] of s.dr) {
     syncView(views.drops, id, () => {
       const g = new THREE.Group();
       g.add(new THREE.Mesh(potionGeo, potionMat));
       const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.18, 6), new THREE.MeshLambertMaterial({ color: 0xd8c8a0 }));
       neck.position.y = 0.25; g.add(neck);
-      g.position.set(x, getHeight(x, z) + 0.5, z);
+      g.position.set(x, (dy ?? getHeight(x, z)) + 0.5, z);
       scene.add(g);
       return { g, y0: g.position.y };
     });
@@ -810,6 +851,7 @@ function updateHUD() {
       }
     }
   }
+  if (!msg) { const it = nearestInteract(); if (it) msg = `<kbd>E</kbd> — ${esc(it.label)}`; }
   if ($('center-msg').innerHTML !== msg) $('center-msg').innerHTML = msg;
 }
 function updateParty() {

@@ -8,11 +8,14 @@ import { spruceGeometry, branchTexture, grassTexture, windSway, tbox, tcyl } fro
 import { ZONES, WATER_LEVEL } from './config.js';
 import { makeFacadeMaterials, SHOP_H, CarFleet, carSpec } from './cityprops.js';
 import { buildYards } from './yards.js';
+import { buildInteriors } from './interiors.js';
+import { pointBlocked } from './buildings.js';
 
 const ENV = 'assets/env/';
 const SKY = 'kloofendal_28d_misty_puresky';
 const RES = 2, CELL = 50, RIVERBED = -3.4;
 export const colliders = []; // круги: деревья, фонари, машины
+export const doors = []; // входы в здания: {x, z, kind, roof}
 let city = null, BX = 2000, BZ = 1150, HW = 0, HH = 0;
 let hPhys = null, hRiver = null;
 const polys = []; // контуры зданий: {p, h, x0, x1, z0, z1, id}
@@ -89,7 +92,18 @@ export function resolveCollision(pos, radius) {
   pos.x = Math.max(-BX + 5, Math.min(BX - 5, pos.x));
   pos.z = Math.max(-BZ + 5, Math.min(BZ - 5, pos.z));
 }
+// Крыша здания под точкой (чтобы стоять на крышах после выхода через люк)
+export function roofAt(x, z, y) {
+  let best = -Infinity;
+  forNear(x, z, (it) => {
+    if (it.r !== undefined || it.h > y + 0.5 || it.h <= best || it.h < 3) return;
+    if (x < it.x0 || x > it.x1 || z < it.z0 || z > it.z1) return;
+    if (pip(it.p, x, z)) best = it.h;
+  });
+  return best;
+}
 export function cameraBlocked(x, y, z) {
+  if (pointBlocked(x, y, z, 0.25)) return true;
   let hit = false;
   forNear(x, z, (it) => {
     if (hit) return;
@@ -175,7 +189,7 @@ function splitExtrude(geo) {
 
 // ================= Постройка города =================
 export function buildWorld(scene) {
-  colliders.length = 0; polys.length = 0; grid.clear();
+  colliders.length = 0; polys.length = 0; grid.clear(); doors.length = 0;
   const rng = mulberry32(77017);
   const flames = [], smokes = [], lamps = [];
   const windU = { uTime: { value: 0 } };
@@ -279,6 +293,11 @@ export function buildWorld(scene) {
       const res = splitExtrude(g2); g2.dispose(); return res;
     };
     if (shopBand) {
+      let best = 0, bi = 0; for (let k = 0; k < b.p.length; k += 2) { const k2 = (k + 2) % b.p.length, l = Math.hypot(b.p[k2] - b.p[k], b.p[k2 + 1] - b.p[k + 1]); if (l > best) { best = l; bi = k; } }
+      const k2 = (bi + 2) % b.p.length, mx = (b.p[bi] + b.p[k2]) / 2, mz = (b.p[bi + 1] + b.p[k2 + 1]) / 2;
+      let nx = -(b.p[k2 + 1] - b.p[bi + 1]) / (best || 1), nz = (b.p[k2] - b.p[bi]) / (best || 1);
+      if ((mx + nx - ccx) ** 2 + (mz + nz - ccz) ** 2 < (mx - nx - ccx) ** 2 + (mz - nz - ccz) ** 2) { nx = -nx; nz = -nz; }
+      if (best > 6) doors.push({ x: mx + nx * 1.3, z: mz + nz * 1.3, kind: 'shop', face: Math.atan2(nx, nz) });
       const [, shopSides] = ext(0, SHOP_H);
       const [caps, sides] = ext(SHOP_H, h);
       if (shopSides) buckets.get('shop').push(shopSides);
@@ -539,7 +558,8 @@ export function buildWorld(scene) {
   }
 
   // ---------- дворы и детали улиц ----------
-  const yardStats = buildYards({ scene, city, rng, getHeight, addCircle, pip, M, T, isRoad, inBuilding, nearZone });
+  const yardStats = buildYards({ scene, city, rng, getHeight, addCircle, pip, M, T, isRoad, inBuilding, nearZone, doors });
+  buildInteriors(scene, T);
   console.log('[астана] дворы:', yardStats);
 
   // ---------- Байтерек ----------

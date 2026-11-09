@@ -2,6 +2,8 @@
 import { CLASSES, ENEMIES, ZONES, QUESTS, xpNeed } from './config.js';
 import { getHeight, resolveCollision, cameraBlocked } from './maps.js';
 import { resolveBoxes, pointBlocked } from './buildings.js';
+import { LOOT } from './interiors.js';
+import { MAP } from './config.js';
 // игрок на другом этаже (выше врага) — недосягаем для ближнего боя
 const reachY = (p, e) => Math.abs(p.y - getHeight(e.x, e.z)) < 2.4;
 
@@ -14,6 +16,7 @@ export class HostSim {
   constructor() {
     this.players = new Map();
     this.enemies = []; this.projectiles = []; this.drops = []; this.events = [];
+    if (MAP.id === 'astana') for (const l of LOOT) this.drops.push({ id: nextId++, x: l.x, y: l.y, z: l.z, t: Infinity, perm: true, hidden: 0 });
     this.level = 1; this.xp = 0; this.questIdx = 0; this.questProg = 0;
     this.time = 0; this.wipeT = 0;
     for (const [key, z] of Object.entries(ZONES)) {
@@ -302,10 +305,13 @@ export class HostSim {
     // --- зелья на земле ---
     this.drops = this.drops.filter((d) => {
       d.t -= dt;
+      if (d.hidden > 0) { d.hidden -= dt; return true; } // аптечка в здании ждёт возрождения
+      const dy = d.y ?? getHeight(d.x, d.z);
       for (const p of standing) {
-        if (p.potions < 5 && Math.hypot(p.x - d.x, p.z - d.z) < 1.6) {
+        if (p.potions < 5 && Math.hypot(p.x - d.x, p.z - d.z) < 1.6 && Math.abs(p.y - dy) < 2) {
           p.potions++;
           this.events.push({ k: 'pickup', id: p.id });
+          if (d.perm) { d.hidden = 120; return true; }
           return false;
         }
       }
@@ -322,7 +328,7 @@ export class HostSim {
       })),
       en: this.enemies.filter((e) => !e.dead).map((e) => [e.id, e.type, r2(e.x), r2(e.z), r2(e.ry), e.mv, e.atkSeq, Math.ceil(e.hp), e.maxHp, e.slowT > 0 ? 1 : 0]),
       pr: this.projectiles.map((p) => [p.id, r2(p.x), r2(p.y), r2(p.z)]),
-      dr: this.drops.map((d) => [d.id, r2(d.x), r2(d.z)]),
+      dr: this.drops.filter((d) => !(d.hidden > 0)).map((d) => (d.y !== undefined ? [d.id, r2(d.x), r2(d.z), r2(d.y)] : [d.id, r2(d.x), r2(d.z)])),
       q: [this.questIdx, this.questProg],
       lv: [this.level, Math.floor(this.xp), xpNeed(this.level)],
       ev: this.events,

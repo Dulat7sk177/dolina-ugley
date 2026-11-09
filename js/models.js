@@ -1,19 +1,26 @@
 // Персонажи: реалистичные модели Mixamo (Adobe) с анимациями + самодельный волк
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { makeWeaponProp } from './weapons3d.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
+import { CLASSES } from './config.js';
 const BASE = 'assets/mixamo/';
+const CLASS_WEAPONS = Object.fromEntries(Object.entries(CLASSES).map(([k, c]) => [k, c.weapons]));
 // model — файл с моделью; height — рост (м); anims — какие файлы анимаций для каких действий: [файл, длительность]
+// Общий набор анимаций игроков (снят на одном скелете Mixamo и подходит всем четырём)
+const PLAYER_ANIMS = {
+  idle: 'a_idle', run: 'a_run', idle_rifle: 'a_rifle_idle', run_rifle: 'a_rifle_run', idle_pistol: 'a_pistol_idle', run_pistol: 'a_pistol_run',
+  idle_sword: 'a_sword_idle', run_sword: 'a_sword_run', jump: 'a_jump', down: 'a_death', die: 'a_death', drive: 'a_drive', sit: 'a_sit', fall: 'a_fall',
+  hit: ['a_hit', 0.6], cheer: ['a_cheer', 3.0], slash: ['a_sword_slash', 0.6], slash1h: ['a_slash1h', 0.6], combo: ['a_sword_combo', 1.1],
+  spin: ['a_sword_spin', 2.0], smoke: ['a_smoking', 7], throw: ['a_throw', 0.5], cast: ['a_cast', 0.8],
+};
 const DEFS = {
-  warrior: {
-    model: 'warrior_idle', height: 1.85, metal: 0.45,
-    anims: { idle: 'warrior_idle', run: 'warrior_run', jump: 'warrior_jump', down: 'warrior_death', die: 'warrior_death', hit: ['warrior_hit', 0.6], cheer: ['warrior_cheer', 4.0], slash: ['warrior_slash', 0.75], spin: ['warrior_spin', 0.95], shield: ['warrior_block', 0.6] },
-  },
-  mage: {
-    model: 'mage_idle', height: 1.8, staff: true,
-    anims: { idle: 'mage_idle', run: 'mage_run', jump: 'mage_jump', down: 'mage_death', die: 'mage_death', hit: ['mage_hit', 0.7], cheer: ['mage_cheer', 4.0], fireball: ['mage_fireball', 0.9], heal: ['mage_heal', 1.3], nova: ['mage_nova', 1.2] },
-  },
+  juggernaut: { model: 'c_juggernaut.glb', height: 1.92, metal: 0.3, anims: PLAYER_ANIMS },
+  sector: { model: 'c_sector.glb', height: 1.85, metal: 0.2, anims: PLAYER_ANIMS },
+  rider: { model: 'c_rider.glb', height: 1.85, anims: PLAYER_ANIMS },
+  shinobi: { model: 'c_shinobi.glb', height: 1.8, anims: PLAYER_ANIMS },
   minion: {
     model: 'zombie_idle', height: 1.8,
     anims: { idle: 'zombie_idle', run: 'zombie_run', die: 'zombie_death', down: 'zombie_death', hit: ['zombie_hit', 0.5], enemy: ['zombie_attack', 1.1] },
@@ -37,8 +44,15 @@ const loaded = {}; // kind -> { scene, height, clips: {action: clip} }
 const fileCache = new Map();
 const cleanName = (n) => n.replace(/^mixamorig\d*:?/, '');
 
+const gltfLoader = new GLTFLoader();
 function loadFBX(loader, name) {
-  if (!fileCache.has(name)) fileCache.set(name, loader.loadAsync(`${BASE}${name}.fbx`));
+  if (!fileCache.has(name)) {
+    // .glb — сжатые модели персонажей; приводим к виду, как у FBX: группа + animations
+    const p = name.endsWith('.glb')
+      ? gltfLoader.loadAsync(BASE + name).then((g) => { g.scene.animations = g.animations; return g.scene; })
+      : loader.loadAsync(`${BASE}${name}.fbx`);
+    fileCache.set(name, p);
+  }
   return fileCache.get(name);
 }
 
@@ -83,6 +97,9 @@ export async function loadModels(onProgress) {
         const [node, prop] = t.name.split('.');
         t.name = cleanName(node) + '.' + prop;
       }
+      // убираем смещение корня (рывки и вихрь не должны уводить модель от позиции игрока)
+      const hip = clip.tracks.find((t) => t.name.endsWith('Hips.position'));
+      if (hip) { const v = hip.values, n = v.length; if (Math.hypot(v[n - 3] - v[0], v[n - 1] - v[2]) > 20) for (let i = 0; i < n; i += 3) { v[i] = v[0]; v[i + 2] = v[2]; } }
       clips[action] = { clip, dur: Array.isArray(spec) ? spec[1] : 0 };
     }
     loaded[kind] = { scene, height: box.max.y - box.min.y, clips };
@@ -93,19 +110,6 @@ function newRig(type) {
   const rig = { type, root: new THREE.Group(), body: new THREE.Group(), mats: [], flash: 0, labelH: 2.4, phase: Math.random() * 6, idleT: Math.random() * 6, attackT: -1 };
   rig.root.add(rig.body);
   return rig;
-}
-
-// Посох мага: дерево + светящийся кристалл
-function makeStaff() {
-  const g = new THREE.Group();
-  const wood = new THREE.MeshStandardMaterial({ color: 0x4a3420, roughness: 0.8 });
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.03, 1.7, 8), wood);
-  shaft.position.y = 0.25; g.add(shaft);
-  const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.07, 0), new THREE.MeshStandardMaterial({ color: 0x9fe8ff, emissive: 0x3ab8ff, emissiveIntensity: 3, roughness: 0.2 }));
-  crystal.scale.y = 1.6; crystal.position.y = 1.17; crystal.userData.glow = true; g.add(crystal);
-  for (let i = 0; i < 3; i++) { const p = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.16, 4), wood); p.position.set(Math.cos(i * 2.1) * 0.05, 1.1, Math.sin(i * 2.1) * 0.05); p.rotation.set(Math.sin(i * 2.1) * 0.4, 0, -Math.cos(i * 2.1) * 0.4); g.add(p); }
-  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-  return g;
 }
 
 function mixamoRig(kind, seed) {
@@ -124,20 +128,22 @@ function mixamoRig(kind, seed) {
     o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();
     for (const m of Array.isArray(o.material) ? o.material : [o.material]) rig.mats.push(m);
   });
-  if (def.staff) {
-    const hand = model.getObjectByName('RightHand');
-    if (hand) {
-      const st = makeStaff();
-      const srcHand = src.scene.getObjectByName('RightHand');
-      const hs = srcHand.getWorldScale(new THREE.Vector3()).x * model.scale.x; // во сколько раз кость меньше метра
-      const k = 1 / hs;
-      st.scale.setScalar(k);
-      st.rotation.set(Math.PI / 2, 0, 0);
-      st.position.set(0, 0.08 * k, 0.02 * k);
-      hand.add(st);
-      st.traverse((o) => { if (o.isMesh) rig.mats.push(o.material); });
+  // оружие в правой руке (переключается rig.setWeapon)
+  rig.props = {}; rig.stance = 'none'; rig.mode = '';
+  const hand = model.getObjectByName('RightHand');
+  if (hand && CLASS_WEAPONS[kind]) {
+    const srcHand = src.scene.getObjectByName('RightHand');
+    const k = 1 / (srcHand.getWorldScale(new THREE.Vector3()).x * model.scale.x); // кость → метры
+    for (const w of CLASS_WEAPONS[kind]) {
+      const prop = makeWeaponProp(w.id);
+      if (!prop) continue;
+      prop.scale.multiplyScalar(k); prop.position.multiplyScalar(k);
+      prop.visible = false; hand.add(prop); rig.props[w.id] = prop;
+      prop.traverse((o) => { if (o.isMesh) rig.mats.push(o.material); });
     }
   }
+  rig.hand = hand;
+  rig.setWeapon = (id, stance) => { for (const [k2, p] of Object.entries(rig.props)) p.visible = k2 === id; if (rig.stance !== stance) { rig.stance = stance; rig.baseName = null; } };
   rig.mixer = new THREE.AnimationMixer(model);
   rig.actions = {};
   rig.clipInfo = src.clips;
@@ -207,7 +213,13 @@ export function animateRig(rig, dt, moving, downed, airborne = false) {
   if (!rig.dead) {
     if (downed !== !!rig.downed) { rig.downed = downed; rig.baseName = null; rig.lockT = 0; }
     if (rig.lockT <= 0) {
-      let base = downed ? 'down' : airborne && rig.clipInfo.jump ? 'jump' : moving && rig.clipInfo.run ? 'run' : 'idle';
+      const st = rig.stance && rig.stance !== 'none' ? '_' + rig.stance : '';
+      let base = downed ? 'down'
+        : rig.mode && rig.clipInfo[rig.mode] ? rig.mode
+        : airborne && rig.clipInfo.jump ? 'jump'
+        : moving ? (rig.clipInfo['run' + st] ? 'run' + st : 'run')
+        : (rig.clipInfo['idle' + st] ? 'idle' + st : 'idle');
+      if (!rig.clipInfo[base]) base = 'idle';
       if (rig.baseName !== base) {
         rig.baseName = base;
         switchTo(rig, rig.act(base), 0.2, base !== 'down');
@@ -295,7 +307,7 @@ function animateWolf(rig, dt, moving) {
 export function makeCharacter(kind, seed = 0) {
   const rig = kind === 'wolf' ? makeWolf(seed) : mixamoRig(kind, seed);
   rig.kind = kind;
-  if (kind === 'warrior' || kind === 'mage') addAura(rig);
+  if (CLASSES[kind]) addAura(rig);
   return rig;
 }
 function addAura(rig) {

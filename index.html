@@ -46,12 +46,12 @@
         <div id="lvl">1</div>
         <div class="bars">
           <div class="bar hp"><i></i><span></span></div>
-          <div class="bar mp"><i></i><span></span></div>
-          <div class="bar xp"><i></i><span></span></div>
+                    <div class="bar xp"><i></i><span></span></div>
         </div>
       </div>
     </div>
     <div id="abilities"></div>
+    <div id="cartimer" class="hidden"></div>
     <div id="banner"></div>
     <div id="attrib"></div>
     <div id="center-msg"></div>
@@ -62,11 +62,11 @@
         <div class="controls">
           <div><kbd>W A S D</kbd> движение</div>
           <div><kbd>Мышь</kbd> обзор, <kbd>колесо</kbd> зум</div>
-          <div><kbd>ЛКМ</kbd> атака</div>
-          <div><kbd>Q</kbd> / <kbd>ПКМ</kbd> умение 1</div>
-          <div><kbd>F</kbd> умение 2</div>
-          <div><kbd>R</kbd> выпить зелье</div>
-          <div><kbd>E</kbd> войти в подъезд/магазин, выйти; (держать) поднять союзника</div>
+          <div><kbd>ЛКМ</kbd> основная атака (держать — автоогонь)</div>
+          <div><kbd>ПКМ</kbd> / <kbd>F</kbd> особое действие оружия</div>
+          <div><kbd>1</kbd> <kbd>2</kbd> / <kbd>Q</kbd> смена оружия, <kbd>R</kbd> перезарядка</div>
+          <div><kbd>H</kbd> аптечка</div>
+          <div><kbd>E</kbd> войти в подъезд/магазин, сесть в машину/выйти; (держать) поднять союзника</div>
           <div><kbd>Shift</kbd> бег, <kbd>Пробел</kbd> прыжок, ещё раз в воздухе — сальто</div>
           <div><kbd>Enter</kbd> чат, <kbd>Esc</kbd> пауза</div>
         </div>
@@ -85,17 +85,8 @@
       <p class="sub">Кооперативная 3D RPG</p>
       <label for="name">Имя героя</label>
       <input id="name" maxlength="16" placeholder="Герой">
-      <label>Класс</label>
-      <div class="classes">
-        <div class="class-card sel" data-cls="warrior">
-          <div class="ci">🛡️</div><b>Воин</b>
-          <small>Много здоровья, ближний бой. Вихрь и Глухая оборона.</small>
-        </div>
-        <div class="class-card" data-cls="mage">
-          <div class="ci">🔮</div><b>Маг</b>
-          <small>Огненные шары, лечение отряда, ледяная волна.</small>
-        </div>
-      </div>
+      <label>Герой (у каждого игрока свой, до 4 в команде)</label>
+      <div class="classes" id="classes"></div>
       <label>Карта (для новой игры)</label>
       <div id="maps" class="maps"></div>
       <button id="btn-host" class="primary">Создать игру</button>

@@ -280,3 +280,61 @@ export class CarFleet {
     for (const t of Object.values(this.types)) for (const im of Object.values(t.ims)) { im.count = t.n; im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; im.computeBoundingSphere(); }
   }
 }
+
+// ================= Dodge Challenger Rider'а =================
+// Отдельная (не инстансная) модель: колёса вращаются, стёкла полупрозрачные — видно, кто сидит внутри
+const CHALLENGER = { L: 5.0, W: 1.95, wr: 0.36, wb: 1.5,
+  body: [[-2.5, 0.3], [2.5, 0.3], [2.53, 0.55], [2.45, 0.86], [0.75, 0.94], [0.0, 1.5], [-1.2, 1.51], [-1.85, 0.98], [-2.48, 0.95], [-2.55, 0.6]],
+  glass: [[0.7, 0.95], [0.0, 1.47], [-1.17, 1.48], [-1.78, 0.98]] };
+export function makeChallenger() {
+  const t = CHALLENGER, { W, wr, wb } = t, front = t.L / 2, by = 0.3;
+  const g = new THREE.Group();
+  const mats = PART_MATS();
+  mats.paint.color.setHex(0xb01414);
+  mats.glass = new THREE.MeshStandardMaterial({ color: 0x0b1215, roughness: 0.05, metalness: 0.8, transparent: true, opacity: 0.88 });
+  const stripe = new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.5 });
+  const add = (geo, m, shadow = true) => { const mesh = new THREE.Mesh(geo, m); mesh.castShadow = shadow; mesh.receiveShadow = true; g.add(mesh); return mesh; };
+  // кузов без крыши над салоном не делаем — классическое купе
+  add(profileGeo(t.body, W, true), mats.paint);
+  const gc = t.glass.reduce((a, [x, y]) => [a[0] + x / 4, a[1] + y / 4], [0, 0]);
+  add(profileGeo(t.glass.map(([x, y]) => [gc[0] + (x - gc[0]) * 1.03, gc[1] + (y - gc[1]) * 1.05]), W + 0.03, false), mats.glass, false);
+  // гоночные полосы по капоту, крыше и багажнику
+  for (const sx of [-0.22, 0.22]) {
+    add(new THREE.BoxGeometry(0.22, 0.02, 1.75).translate(sx, 0.95, 1.62), stripe, false);
+    add(new THREE.BoxGeometry(0.22, 0.02, 1.15).translate(sx, 1.515, -0.6), stripe, false);
+    add(new THREE.BoxGeometry(0.22, 0.02, 0.62).translate(sx, 0.965, -2.17), stripe, false);
+  }
+  add(new THREE.BoxGeometry(0.7, 0.08, 0.9).translate(0, 0.98, 1.3), mats.paint); // воздухозаборник на капоте
+  add(new THREE.BoxGeometry(W - 0.2, 0.06, 0.25).translate(0, 1.0, -2.42), stripe); // спойлер
+  // салон: сиденья и руль (видны через стёкла)
+  const seat = new THREE.MeshStandardMaterial({ color: 0x1a1414, roughness: 0.8 });
+  for (const [sx, sz] of [[0.42, -0.2], [-0.42, -0.2], [0.42, -1.1], [-0.42, -1.1]]) {
+    add(new THREE.BoxGeometry(0.5, 0.14, 0.5).translate(sx, 0.36, sz), seat, false);
+    add(new THREE.BoxGeometry(0.5, 0.6, 0.12).translate(sx, 0.7, sz - 0.3).rotateX(0), seat, false);
+  }
+  add(new THREE.TorusGeometry(0.18, 0.025, 6, 16).rotateX(-0.4).translate(0.42, 0.9, 0.35), mats.rubber, false);
+  // бамперы, решётка, фары, фонари
+  add(new THREE.BoxGeometry(W - 0.05, 0.2, 0.14).translate(0, by + 0.1, front + 0.02), mats.metal);
+  add(new THREE.BoxGeometry(W - 0.05, 0.2, 0.14).translate(0, by + 0.1, -front - 0.02), mats.metal);
+  add(new THREE.BoxGeometry(W - 0.25, 0.3, 0.05).translate(0, by + 0.38, front + 0.04), stripe);
+  for (const sx of [-1, 1]) {
+    for (const k of [0.25, 0.52]) add(new THREE.CylinderGeometry(0.085, 0.085, 0.05, 14).rotateX(Math.PI / 2).translate(sx * (W / 2 - k), by + 0.4, front + 0.06), mats.head, false);
+    add(new THREE.BoxGeometry(0.75, 0.13, 0.05).translate(sx * (W / 2 - 0.45), by + 0.5, -front - 0.04), mats.tail, false);
+    add(new THREE.BoxGeometry(0.18, 0.1, 0.1).translate(sx * (W / 2 + 0.05), 1.0, 0.6), mats.paint);
+    add(new THREE.CylinderGeometry(0.05, 0.05, 0.2, 8).rotateX(Math.PI / 2).translate(sx * 0.5, by + 0.08, -front - 0.1), mats.metal, false); // выхлоп
+  }
+  mats.head.emissiveIntensity = 1.2; mats.tail.emissiveIntensity = 0.8;
+  // колёса — отдельные группы, чтобы крутить
+  g.userData.wheels = [];
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const w = new THREE.Group(); w.position.set(sx * (W / 2 - 0.15), wr, sz * wb);
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(wr, wr, 0.28, 20).rotateZ(Math.PI / 2), mats.rubber); tire.castShadow = true;
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(wr * 0.62, wr * 0.62, 0.3, 10).rotateZ(Math.PI / 2), mats.metal);
+    const spokes = new THREE.Mesh(new THREE.BoxGeometry(0.31, wr * 1.1, 0.07), stripe);
+    w.add(tire, rim, spokes, spokes.clone().rotateX(Math.PI / 2)); g.add(w); g.userData.wheels.push(w);
+  }
+  // свет фар
+  const sp = new THREE.SpotLight(0xfff0d0, 60, 35, 0.5, 0.5, 1.2); sp.position.set(0, 0.7, front); sp.target.position.set(0, 0, front + 10);
+  g.add(sp, sp.target);
+  return g;
+}

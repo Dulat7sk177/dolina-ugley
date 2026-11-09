@@ -5,24 +5,61 @@ export const PEER_PREFIX = 'dolina-uglei-rpg-v1-';
 export const WORLD_SIZE = 240;
 export let WATER_LEVEL = -3; // меняется при выборе карты
 
+export const MAX_PLAYERS = 4;
+
+// Персонажи и их оружие. У каждого оружия: primary — левая кнопка мыши, alt — правая.
+// stance — стойка (какие анимации бега/покоя): rifle | pistol | sword | none
 export const CLASSES = {
-  warrior: {
-    name: 'Воин', hp: 160, mp: 60, mpRegen: 7, speed: 6.2, dmg: 22,
-    abilities: {
-      atk: { kind: 'slash', name: 'Удар мечом', cd: 0.55, mp: 0 },
-      q: { kind: 'spin', name: 'Вихрь (урон вокруг)', cd: 5, mp: 25 },
-      f: { kind: 'shield', name: 'Глухая оборона (-65% урона, 5 с)', cd: 14, mp: 20 },
-    },
+  juggernaut: {
+    name: 'Juggernaut', icon: '🛡️', hp: 230, speed: 5.6,
+    desc: 'Тяжёлый штурмовик. Дробовик с гранатомётом и мачете.',
+    weapons: [
+      { id: 'shotgun', name: 'Дробовик', icon: '💥', stance: 'rifle',
+        primary: { kind: 'shot', mag: 5, reload: 2.3, cd: 0.8, dmg: 13, pellets: 9, spread: 0.085, range: 30, falloff: true },
+        alt: { kind: 'grenade', name: 'Гранатомёт', cd: 4, dmg: 110, radius: 6 } },
+      { id: 'machete', name: 'Мачете', icon: '🔪', stance: 'sword',
+        primary: { kind: 'melee', cd: 0.5, dmg: 34, range: 2.7, anim: 'slash1h' },
+        alt: { kind: 'dash', name: 'Рывок с мачете', cd: 5, dur: 1.0, speed: 13, dmg: 26, tick: 0.14 } },
+    ],
   },
-  mage: {
-    name: 'Маг', hp: 105, mp: 130, mpRegen: 11, speed: 6.2, dmg: 26,
-    abilities: {
-      atk: { kind: 'fireball', name: 'Огненный шар', cd: 0.7, mp: 4 },
-      q: { kind: 'heal', name: 'Круг исцеления (лечит и поднимает союзников)', cd: 9, mp: 35 },
-      f: { kind: 'nova', name: 'Ледяная волна (урон + замедление)', cd: 7, mp: 30 },
-    },
+  sector: {
+    name: 'Sector', icon: '🎯', hp: 160, speed: 6.4,
+    desc: 'Тактик. Автоматическая винтовка с крюком-кошкой и самурайский меч.',
+    weapons: [
+      { id: 'rifle', name: 'Винтовка', icon: '🔫', stance: 'rifle',
+        primary: { kind: 'shot', mag: 30, reload: 2.0, cd: 0.1, auto: true, dmg: 15, pellets: 1, spread: 0.012, range: 100 },
+        alt: { kind: 'hook', name: 'Крюк-кошка', cd: 0, range: 20 } },
+      { id: 'katana', name: 'Самурайский меч', icon: '🗡️', stance: 'sword',
+        primary: { kind: 'melee', cd: 0.45, dmg: 36, range: 2.9, anim: 'slash' },
+        alt: { kind: 'spin', name: 'Вихрь клинка', cd: 6, dur: 2.0, dmg: 20, tick: 0.25, radius: 3.4, slow: 0.5 } },
+    ],
+  },
+  rider: {
+    name: 'Rider', icon: '🏎️', hp: 170, speed: 6.2,
+    desc: 'Водитель. Тяжёлый револьвер, сигарета и Dodge Challenger на всю команду.',
+    weapons: [
+      { id: 'revolver', name: 'Револьвер', icon: '🔫', stance: 'pistol',
+        primary: { kind: 'shot', mag: 6, reload: 1.9, cd: 0.33, dmg: 55, pellets: 1, spread: 0.006, range: 80 },
+        alt: { kind: 'smoke', name: 'Закурить', cd: 7 } },
+      { id: 'car', name: 'Dodge Challenger', icon: '🚗', stance: 'none',
+        primary: { kind: 'summon', cd: 0, life: 180, recharge: 60 },
+        alt: { kind: 'summon', name: 'Призвать машину', cd: 0 } },
+    ],
+  },
+  shinobi: {
+    name: 'Shinobi', icon: '🥷', hp: 135, speed: 7.0,
+    desc: 'Ниндзя. Пробивающие кунаи с телепортом к ним и молния-телепорт.',
+    weapons: [
+      { id: 'kunai', name: 'Кунай', icon: '🗡️', stance: 'none',
+        primary: { kind: 'kunai', mag: 10, regen: 1.0, cd: 0.25, dmg: 32, speed: 50, pierce: 3, anim: 'throw' },
+        alt: { kind: 'kunaiTp', name: 'Телепорт к кунаю', cd: 0.4 } },
+      { id: 'blink', name: 'Молния', icon: '⚡', stance: 'none',
+        primary: { kind: 'blink', cd: 2.5, range: 20, dmg: 50, radius: 3.6, anim: 'cast' },
+        alt: { kind: 'blink', name: 'Молния-телепорт', cd: 2.5, range: 20, dmg: 50, radius: 3.6, anim: 'cast' } },
+    ],
   },
 };
+export const CLASS_IDS = Object.keys(CLASSES);
 
 export const ENEMIES = {
   minion: { name: 'Мертвец', hp: 50, dmg: 7, speed: 3.8, range: 1.6, cd: 1.2, xp: 22, scale: 0.9, aggro: 15, radius: 0.5 },

@@ -21,6 +21,17 @@ const MIME = {
 
 http
   .createServer((req, res) => {
+    // служебная запись сконвертированных моделей (только с этого компьютера, только *.glb в assets/mixamo)
+    if (req.method === 'OPTIONS' && req.url.startsWith('/__save?')) { res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Private-Network': 'true' }); return res.end(); }
+    if (req.method === 'POST' && req.url.startsWith('/__save?')) {
+      const name = new URL(req.url, 'http://x').searchParams.get('name') || '';
+      const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+      if (!local || !/^[a-z0-9_]+\.(glb|fbx)$/i.test(name)) { res.writeHead(403); return res.end(); }
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => { fs.writeFileSync(path.join(ROOT, 'assets', 'mixamo', name), Buffer.concat(chunks)); res.writeHead(200, { 'Access-Control-Allow-Origin': '*' }); res.end('ok'); });
+      return;
+    }
     let p = decodeURIComponent(req.url.split('?')[0]);
     if (p === '/') p = '/index.html';
     const fp = path.join(ROOT, path.normalize(p));

@@ -3,3 +3,5 @@ assets/models/
 .claude/
 node_modules/
 *.tmp
+/*.fbx
+assets/mixamo/c_*.fbx

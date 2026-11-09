@@ -1,6 +1,6 @@
 // Главный файл: рендер, управление, камера, интерфейс, синхронизация
 import * as THREE from 'three';
-import { CLASSES, ENEMIES, QUESTS, ZONES, ELDER_LINES, WATER_LEVEL, MAP, MAP_LIST } from './config.js';
+import { MAX_PLAYERS, CLASSES, CLASS_IDS, ENEMIES, QUESTS, ZONES, ELDER_LINES, WATER_LEVEL, MAP, MAP_LIST } from './config.js';
 import { buildWorld, loadWorldAssets, getHeight, resolveCollision, colliders, cameraBlocked, useMap, roofAt, doors } from './maps.js';
 import { SPAWN, EXITS } from './interiors.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -12,6 +12,7 @@ import { FX } from './particles.js';
 import { surfaceAt, ceilingAt, resolveBoxes, pointBlocked } from './buildings.js';
 import { HostSim } from './host.js';
 import { Net } from './net.js';
+import * as combat from './combat.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -70,7 +71,7 @@ addEventListener('resize', () => {
 
 // ================= Состояние =================
 const G = { started: false, isHost: false, myId: null, sim: null, net: null, code: null, sendAcc: 0, snapAcc: 0, hudAcc: 0, partyAcc: 0, state: null, quest: [0, 0], lv: [1, 0, 100], chatOpen: false, hurt: 0 };
-const me = { name: '', cls: 'warrior', x: 0, y: 0, z: 0, vy: 0, ry: 0, onGround: true, moving: false, mp: 100, maxMp: 100, hp: 100, maxHp: 100, downed: false, potions: 0, shield: false, revive: 0, a: 0, ak: '', faceT: 0, cds: { atk: 0, q: 0, f: 0, r: 0 }, rig: null, manaWarn: 0, jumps: 0, flipN: 0, flipT: -1 };
+const me = { name: '', cls: 'juggernaut', x: 0, y: 0, z: 0, vy: 0, ry: 0, onGround: true, moving: false, hp: 100, maxHp: 100, downed: false, potions: 0, shield: false, revive: 0, a: 0, ak: '', faceT: 0, cds: { r: 0 }, rig: null, jumps: 0, flipN: 0, flipT: -1 };
 const cam = { yaw: 0, pitch: 0.35, dist: 6.5 };
 const keys = {};
 let mouseDown = false, locked = false;
@@ -154,7 +155,7 @@ function spawnFloater(x, y, z, text, cls) {
 }
 function onAttackAnim(rig, kind) {
   playAttack(rig, kind);
-  if (kind === 'slash' && rig.kind === 'warrior') spawnSlash(rig.root);
+  if (kind === 'slash' || kind === 'slash1h' || kind === 'combo' || kind === 'spin') spawnSlash(rig.root);
 }
 
 // ================= Чат и сообщения =================
@@ -192,12 +193,18 @@ function closeChat(send) {
 }
 
 // ================= Лобби =================
-let selClass = 'warrior', busy = false;
-try { $('name').value = localStorage.getItem('rpg-name') || ''; } catch { /* нет доступа к хранилищу */ }
+let selClass = 'juggernaut', busy = false, takenCls = [];
+try { $('name').value = localStorage.getItem('rpg-name') || ''; selClass = CLASSES[localStorage.getItem('rpg-cls')] ? localStorage.getItem('rpg-cls') : selClass; } catch { /* нет доступа к хранилищу */ }
+$('classes').innerHTML = CLASS_IDS.map((id) => { const c = CLASSES[id]; return `<div class="class-card${id === selClass ? ' sel' : ''}" data-cls="${id}"><div class="ci">${c.icon}</div><b>${esc(c.name)}</b><small>${esc(c.desc)}</small><div class="cw">${c.weapons.map((w) => w.icon + ' ' + esc(w.name)).join('<br>')}</div><div class="taken">занят</div></div>`; }).join('');
+function markTaken() { document.querySelectorAll('.class-card').forEach((c) => c.classList.toggle('is-taken', takenCls.includes(c.dataset.cls))); }
 document.querySelectorAll('.class-card').forEach((card) => card.addEventListener('click', () => {
+  if (takenCls.includes(card.dataset.cls)) return setStatus('Этого героя уже выбрал другой игрок', true);
   document.querySelectorAll('.class-card').forEach((c) => c.classList.remove('sel'));
   card.classList.add('sel');
   selClass = card.dataset.cls;
+  try { localStorage.setItem('rpg-cls', selClass); } catch { /* ignore */ }
+  // уже подключены, но хост отказал — пробуем снова с новым героем
+  if (G.awaitClass && G.net) { me.cls = selClass; G.net.send({ t: 'hello', name: me.name, cls: me.cls }); setStatus('Ждём ответа хоста…'); }
 }));
 const urlJoin = new URLSearchParams(location.search).get('join');
 if (urlJoin) $('join-code').value = urlJoin.toUpperCase();
@@ -250,7 +257,7 @@ async function startGame(mode, code) {
   try { localStorage.setItem('rpg-name', me.name); } catch { /* ignore */ }
   me.cls = selClass;
   const c = CLASSES[me.cls];
-  me.maxMp = me.mp = c.mp; me.maxHp = me.hp = c.hp;
+  me.maxHp = me.hp = c.hp;
   if (mode === 'host') {
     G.isHost = true; G.myId = 'host';
     try { await loadMap(selMap); } catch (err) { console.error(err); setStatus('Не удалось загрузить карту', true); busy = false; return; }
@@ -284,16 +291,27 @@ async function startGame(mode, code) {
 function hostOnData(pid, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.t === 'hello') {
-    G.sim.addPlayer(pid, String(msg.name || 'Герой').slice(0, 16), CLASSES[msg.cls] ? msg.cls : 'warrior');
+    if (G.sim.players.has(pid)) return;
+    const taken = [...G.sim.players.values()].map((p) => p.cls);
+    if (G.sim.players.size >= MAX_PLAYERS) { G.net.sendTo(pid, { t: 'reject', why: 'full' }); return; }
+    if (!CLASSES[msg.cls] || taken.includes(msg.cls)) { G.net.sendTo(pid, { t: 'reject', why: 'class', taken }); return; }
+    G.sim.addPlayer(pid, String(msg.name || 'Герой').slice(0, 16), msg.cls);
     G.net.sendTo(pid, { t: 'welcome', id: pid, map: MAP.id });
     return;
   }
+  if (!G.sim.players.has(pid)) return;
   G.sim.onMessage(pid, msg);
 }
 function clientOnData(msg) {
   if (!msg) return;
+  if (msg.t === 'reject' && !G.started) {
+    if (msg.why === 'full') { setStatus(`В комнате уже ${MAX_PLAYERS} игрока — мест нет`, true); G.net.destroy(); G.net = null; busy = false; return; }
+    takenCls = msg.taken || []; markTaken(); G.awaitClass = true;
+    setStatus('Этот герой уже занят — выберите другого', true);
+    return;
+  }
   if (msg.t === 'welcome' && !G.started && !G.loading) {
-    G.myId = msg.id; G.loading = true;
+    G.myId = msg.id; G.loading = true; G.awaitClass = false;
     loadMap(msg.map || 'valley').then(enterGame).catch((err) => { console.error(err); setStatus('Не удалось загрузить карту', true); });
   }
   else if (msg.t === 's' && G.started) applyState(msg);
@@ -309,7 +327,7 @@ function sendToHost(msg) {
 }
 addEventListener('beforeunload', () => G.net?.destroy());
 
-const ICONS = { slash: '⚔️', spin: '🌀', shield: '🛡️', fireball: '🔥', heal: '💚', nova: '❄️' };
+const PRIMARY_NAMES = { shot: 'выстрел', melee: 'удар', kunai: 'бросок куная', blink: 'молния-телепорт', summon: 'призвать машину' };
 function enterGame() {
   G.started = true;
   $('lobby').classList.add('hidden');
@@ -319,11 +337,9 @@ function enterGame() {
   me.x = ZONES.village.x + (Math.random() - 0.5) * 6; me.z = ZONES.village.z - 4; me.y = getHeight(me.x, me.z);
   const z0 = ZONES[QUESTS[0].zone];
   cam.yaw = Math.atan2(z0.x - me.x, z0.z - me.z);
-  const ab = CLASSES[me.cls].abilities;
-  const slots = [['atk', 'ЛКМ'], ['q', 'Q'], ['f', 'F']];
-  $('abilities').innerHTML = slots.map(([k, key]) => `<div class="slot" id="slot-${k}" title="${esc(ab[k].name)}"><div class="icon">${ICONS[ab[k].kind]}</div><div class="cd"></div><div class="key">${key}</div><div class="mpc">${ab[k].mp || ''}</div></div>`).join('')
-    + '<div class="slot" id="slot-r" title="Зелье здоровья (+50%)"><div class="icon">🧪</div><div class="cd"></div><div class="key">R</div><div class="cnt" id="pot-count">0</div></div>';
-  $('ability-help').innerHTML = `<b>${esc(CLASSES[me.cls].name)}:</b><br>` + slots.map(([k, key]) => `${key} — ${esc(ab[k].name)}${ab[k].mp ? ` (${ab[k].mp} маны)` : ''}`).join('<br>');
+  combat.setClass(me.cls);
+  const cl = CLASSES[me.cls];
+  $('ability-help').innerHTML = `<b>${cl.icon} ${esc(cl.name)}:</b><br>` + cl.weapons.map((w, i) => `<kbd>${i + 1}</kbd> ${w.icon} ${esc(w.name)}: ЛКМ — ${esc(PRIMARY_NAMES[w.primary.kind] || '')}, ПКМ/F — ${esc(w.alt.name || '')}`).join('<br>');
   if (G.code) {
     $('room').innerHTML = `<span>Код комнаты: <b>${esc(G.code)}</b></span><button id="copy-code">Копировать</button>`;
     $('copy-code').onclick = () => { navigator.clipboard?.writeText(G.code); $('copy-code').textContent = 'Готово'; };
@@ -346,12 +362,11 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Space') tryJump();
   if (e.code === 'KeyE') tryInteract();
   if (e.code === 'Enter') { e.preventDefault(); openChat(); }
-  else if (e.code === 'KeyQ') useAbility('q');
-  else if (e.code === 'KeyF') useAbility('f');
-  else if (e.code === 'KeyR') usePotion();
+  else if (e.code === 'KeyH') usePotion();
+  else combat.onKey(e.code);
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
-addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseDown = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseDown = false; combat.releaseAll(); });
 const lockTarget = renderer.domElement;
 // Захват мыши; если браузер не даёт (встроенные окна) — камера крутится зажатой правой кнопкой
 let noLock = false, rmbDrag = false;
@@ -372,7 +387,7 @@ document.addEventListener('pointerlockchange', () => {
   if (noLock) return;
   locked = document.pointerLockElement === lockTarget;
   $('pause').classList.toggle('hidden', locked);
-  if (!locked) mouseDown = false;
+  if (!locked) { mouseDown = false; combat.releaseAll(); }
 });
 addEventListener('keydown', (e) => { if (noLock && e.code === 'Escape' && G.started) { locked = false; $('pause').classList.remove('hidden'); } });
 addEventListener('mousemove', (e) => {
@@ -382,31 +397,17 @@ addEventListener('mousemove', (e) => {
 });
 addEventListener('mousedown', (e) => {
   if (!locked) return;
-  if (e.button === 0 && e.target === lockTarget) mouseDown = true;
-  if (e.button === 2) { if (noLock) rmbDrag = true; else useAbility('q'); }
+  if (e.button === 0 && e.target === lockTarget) { mouseDown = true; combat.onMouse(0, true); }
+  if (e.button === 2) { if (noLock) rmbDrag = true; else combat.onMouse(2, true); }
 });
-addEventListener('mouseup', (e) => { if (e.button === 2) rmbDrag = false; });
-addEventListener('mouseup', (e) => { if (e.button === 0) mouseDown = false; });
+addEventListener('mouseup', (e) => { if (e.button === 2) { rmbDrag = false; combat.onMouse(2, false); } });
+addEventListener('mouseup', (e) => { if (e.button === 0) { mouseDown = false; combat.onMouse(0, false); } });
 addEventListener('contextmenu', (e) => e.preventDefault());
 addEventListener('wheel', (e) => { if (G.started) cam.dist = clamp(cam.dist + e.deltaY * 0.005, 3, 13); }, { passive: true });
 
-function useAbility(slot) {
-  if (!G.started || me.downed || G.chatOpen || !locked) return;
-  const ab = CLASSES[me.cls].abilities[slot];
-  if (me.cds[slot] > 0) return;
-  if (me.mp < ab.mp) {
-    if (me.manaWarn <= 0) { me.manaWarn = 1.5; addChat(null, 'Не хватает маны'); }
-    return;
-  }
-  me.mp -= ab.mp; me.cds[slot] = ab.cd;
-  me.a++; me.ak = ab.kind; me.faceT = 0.45; me.ry = cam.yaw;
-  me.rig.root.rotation.y = me.ry;
-  onAttackAnim(me.rig, ab.kind);
-  sendToHost({ t: 'atk', kind: ab.kind, ry: r2(cam.yaw) });
-}
 // Прыжок; в воздухе — второй прыжок с сальто (как в Devil May Cry)
 function tryJump() {
-  if (!G.started || me.downed || G.chatOpen) return;
+  if (!G.started || me.downed || G.chatOpen || combat.inCar()) return;
   if (me.onGround) { me.vy = 8.5; me.onGround = false; me.jumps = 1; return; }
   if (me.jumps < 2) {
     me.vy = 9.5; me.jumps = 2; me.flipT = 0; me.flipN++;
@@ -443,6 +444,9 @@ function nearestInteract() {
     for (const ex of EXITS) { const d = Math.hypot(ex.x - me.x, ex.z - me.z) + Math.abs(ex.y - me.y) * 0.5; if (d < bd) { bd = d; best = ex; } }
     return best && { type: 'exit', ex: best, label: best.label };
   }
+  if (combat.inCar()) return { type: 'carOut', label: 'выйти из машины' };
+  const car = combat.nearestCar();
+  if (car) return { type: 'car', car, label: 'сесть в Dodge Challenger' };
   let best = null, bd = 2.4;
   for (const d of doors) { const dist = Math.hypot(d.x - me.x, d.z - me.z); if (dist < bd) { bd = dist; best = d; } }
   return best && { type: 'door', door: best, label: DOOR_NAMES[best.kind] };
@@ -455,8 +459,10 @@ function teleport(x, y, z, yaw) {
 }
 function tryInteract() {
   if (!G.started || G.chatOpen) return;
+  if (combat.inCar()) { combat.leaveCar(); return; }
   const it = nearestInteract();
   if (!it) return;
+  if (it.type === 'car') { combat.enterCar(it.car); return; }
   if (it.type === 'door') {
     me.ret = it.door;
     const sp = SPAWN[it.door.kind];
@@ -475,7 +481,7 @@ function tryInteract() {
 
 function usePotion() {
   if (me.downed || me.cds.r > 0) return;
-  if (me.potions <= 0) { addChat(null, 'Нет зелий — их роняют враги'); return; }
+  if (me.potions <= 0) { addChat(null, 'Нет аптечек — их роняют враги'); return; }
   if (me.hp >= me.maxHp) return;
   me.cds.r = 1;
   sendToHost({ t: 'potion' });
@@ -485,8 +491,11 @@ function usePotion() {
 function updateLocal(dt) {
   const c = CLASSES[me.cls];
   for (const k in me.cds) me.cds[k] = Math.max(0, me.cds[k] - dt);
-  me.manaWarn -= dt;
-  me.mp = Math.min(me.maxMp, me.mp + c.mpRegen * dt);
+  combat.update(dt);
+  if (combat.moveOverride(dt)) {
+    if (!combat.inCar()) { resolveCollision(me, 0.45); resolveBoxes(me, 0.4, me.y); const g0 = Math.max(getHeight(me.x, me.z), surfaceAt(me.x, me.z, me.y), roofAt(me.x, me.z, me.y)); if (me.y < g0) me.y = g0; }
+    return;
+  }
   const canAct = !me.downed && !G.chatOpen;
   let fwd = 0, side = 0;
   if (canAct) {
@@ -500,7 +509,7 @@ function updateLocal(dt) {
   const inWater = me.y < WATER_LEVEL - 0.3;
   if (me.moving) {
     ix /= len; iz /= len;
-    const spd = c.speed * (keys.ShiftLeft || keys.ShiftRight ? 1.55 : 1) * (inWater ? 0.6 : 1);
+    const spd = c.speed * (keys.ShiftLeft || keys.ShiftRight ? 1.55 : 1) * (inWater ? 0.6 : 1) * combat.speedMul();
     me.x += ix * spd * dt; me.z += iz * spd * dt;
   }
   let targetRy = me.ry;
@@ -519,7 +528,6 @@ function updateLocal(dt) {
   else if (me.onGround && me.vy <= 0 && me.y - ground < 0.45) { me.y = ground; me.vy = 0; } // спуск по ступенькам
   else me.onGround = false;
 
-  if (canAct && mouseDown && locked) useAbility('atk');
 }
 
 function updateCamera() {
@@ -549,6 +557,7 @@ function updateCamera() {
 
 // ================= Применение состояния от хоста =================
 function handleEvent(ev) {
+  if (combat.handleEvent(ev)) return;
   switch (ev.k) {
     case 'dmg':
       spawnFloater(ev.x, ev.y, ev.z, ev.v, ev.c);
@@ -579,7 +588,10 @@ function handleEvent(ev) {
       if (v) playAttack(v.rig, 'slam');
       break;
     }
-    case 'boom': spawnBoom(ev.x, ev.y, ev.z); fx.fireBurst(ev.x, ev.y, ev.z); break;
+    case 'boom':
+      spawnBoom(ev.x, ev.y, ev.z); fx.fireBurst(ev.x, ev.y, ev.z);
+      if (ev.big) { fx.shockwave(ev.x, ev.y, ev.z, [0xffb040, 0xff6020, 0x6a5a4a], 14, 70); fx.burst(ev.x, ev.y + 0.5, ev.z, 50, [0x5a5048, 0x3a3430], 7, 0.5, 1.4, { gravity: -9, drag: 1 }); if (Math.hypot(ev.x - me.x, ev.z - me.z) < 14) G.hurt = Math.max(G.hurt, 0.25); }
+      break;
     case 'levelup':
       banner(`Уровень ${ev.level}!`);
       spawnPillar(me.x, me.y, me.z); playCheer(me.rig); fx.spiral(me.x, me.y, me.z, [0xffd760, 0xfff2b0, 0xffffff]);
@@ -588,7 +600,12 @@ function handleEvent(ev) {
     case 'quest': banner(`Задание выполнено: ${ev.title}`); addChat(null, `Задание «${ev.title}» выполнено!`); break;
     case 'victory': setTimeout(() => banner(MAP.victory), 3300); break;
     case 'tp':
-      if (ev.id === G.myId) { me.x = ev.x; me.z = ev.z; me.y = getHeight(ev.x, ev.z) + 0.5; me.vy = 0; }
+      if (ev.fx === 'smoke' || ev.y !== undefined) {
+        const pos = ev.id === G.myId ? me : views.players.get(ev.id)?.pos;
+        if (pos) fx.burst(pos.x, pos.y + 1, pos.z, 24, ev.fx === 'smoke' ? [0x6a6a6a, 0x9a9a9a] : [0xcfeaff, 0xffffff], 3, 0.5, 0.7, ev.fx === 'smoke' ? { smoke: true, grow: 1.2, alpha: 0.6 } : { drag: 2 });
+      }
+      if (ev.id === G.myId) { me.x = ev.x; me.z = ev.z; me.y = ev.y !== undefined ? ev.y : getHeight(ev.x, ev.z) + 0.5; me.vy = 0; cam.cur = undefined; }
+      else { const v = views.players.get(ev.id); if (v) { v.pos.set(ev.x, ev.y ?? getHeight(ev.x, ev.z), ev.z); v.tgt.copy(v.pos); } }
       break;
     case 'down': addChat(null, `${ev.name} повержен!`); break;
     case 'revive': addChat(null, `${ev.name} снова в строю`); break;
@@ -598,7 +615,7 @@ function handleEvent(ev) {
     case 'pickup': {
       const pv = ev.id === G.myId ? { x: me.x, y: me.y, z: me.z } : views.players.get(ev.id)?.pos;
       if (pv) fx.burst(pv.x, pv.y + 0.8, pv.z, 20, [0xff4060, 0xffffff], 2.5, 0.25, 0.7, { gravity: 2 });
-      if (ev.id === G.myId) addChat(null, 'Подобрано зелье здоровья (R — выпить)');
+      if (ev.id === G.myId) addChat(null, 'Подобрана аптечка (H — использовать)');
       break;
     }
   }
@@ -627,8 +644,9 @@ function applyState(s) {
     const v = syncView(views.players, p.id, () => {
       const rig = makeCharacter(p.c, 0);
       scene.add(rig.root);
-      return { rig, pos: new THREE.Vector3(p.x, p.y, p.z), tgt: new THREE.Vector3(), ry: p.ry, a: p.a, label: makeLabel(p.n, 'ally') };
+      return { id: p.id, rig, pos: new THREE.Vector3(p.x, p.y, p.z), tgt: new THREE.Vector3(), ry: p.ry, a: p.a, label: makeLabel(p.n, 'ally') };
     });
+    if (v.w !== p.w) { v.w = p.w; const w = CLASSES[p.c]?.weapons[p.w | 0]; if (w) v.rig.setWeapon?.(w.id, w.stance); }
     v.tgt.set(p.x, p.y, p.z); v.try = p.ry; v.mv = p.mv; v.hp = p.hp; v.mh = p.mh; v.d = p.d; v.rv = p.rv; v.sh = p.sh; v.name = p.n;
     if (p.a !== v.a) { v.a = p.a; onAttackAnim(v.rig, p.ak); }
     if (p.fl !== v.fl) { if (v.fl !== undefined) { v.flipT = 0; flipBurst(v.pos.x, v.pos.y, v.pos.z); } v.fl = p.fl; }
@@ -655,17 +673,9 @@ function applyState(s) {
     potionGeo = new THREE.SphereGeometry(0.22, 10, 8);
     potionMat = new THREE.MeshLambertMaterial({ color: 0xe0303a, emissive: 0x551010 });
   }
-  for (const [id, x, y, z] of s.pr) {
-    const v = syncView(views.proj, id, () => {
-      const g = new THREE.Group();
-      g.add(new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), fireCore), new THREE.Mesh(new THREE.SphereGeometry(0.38, 10, 8), fireGlow));
-      g.position.set(x, y, z);
-      scene.add(g);
-      return { g, tgt: new THREE.Vector3() };
-    });
-    v.tgt.set(x, y, z);
-  }
-  prune(views.proj, (v) => scene.remove(v.g));
+  combat.applyProjectiles(s.pr);
+  combat.applyCars(s.cars);
+
 
   for (const [id, x, z, dy] of s.dr) {
     syncView(views.drops, id, () => {
@@ -696,6 +706,9 @@ function updateViews(dt, t) {
   for (const v of views.players.values()) {
     v.pos.lerp(v.tgt, k);
     v.ry = lerpAngle(v.ry, v.try, k);
+    const seat = combat.seatPose(v.id);
+    if (seat) { v.pos.set(seat.x, seat.y, seat.z); v.ry = seat.ry; }
+    v.rig.mode = seat ? seat.mode : '';
     v.rig.root.position.copy(v.pos); v.rig.root.rotation.y = v.ry;
     animateRig(v.rig, dt, v.mv, v.d);
     v.flipT = applyFlip(v.rig, v.flipT ?? -1, dt, v.pos);
@@ -721,11 +734,7 @@ function updateViews(dt, t) {
     if (d.t > 1.8) d.v.rig.root.position.y -= dt * 0.8;
     if (d.t > 3.2) { scene.remove(d.v.rig.root); dying.splice(i, 1); }
   }
-  for (const v of views.proj.values()) {
-    v.g.position.lerp(v.tgt, 1 - Math.exp(-20 * dt));
-    const pp = v.g.position;
-    for (let k = 0; k < 3; k++) fx.glow.emit(pp.x + (Math.random() - 0.5) * 0.2, pp.y + (Math.random() - 0.5) * 0.2, pp.z + (Math.random() - 0.5) * 0.2, (Math.random() - 0.5) * 0.6, 0.5 + Math.random(), (Math.random() - 0.5) * 0.6, k ? 0xff7a20 : 0xffe08a, 0.45, 0.35, { grow: -0.8 });
-  }
+  combat.updateProjectiles(dt);
   ambient(dt);
   for (const v of views.drops.values()) { v.g.position.y = v.y0 + Math.sin(t * 3) * 0.12; v.g.rotation.y = t * 1.5; }
 
@@ -812,17 +821,14 @@ function setBar(name, v, max, text) {
 }
 function updateHUD() {
   setBar('hp', me.hp, me.maxHp);
-  setBar('mp', me.mp, me.maxMp);
   $('lvl').textContent = G.lv[0];
   setBar('xp', G.lv[1], G.lv[2], '');
-  const ab = CLASSES[me.cls].abilities;
-  for (const k of ['atk', 'q', 'f']) {
-    const el = $('slot-' + k);
-    el.querySelector('.cd').style.height = (me.cds[k] / ab[k].cd) * 100 + '%';
-    el.classList.toggle('nomana', me.mp < ab[k].mp);
-  }
-  $('slot-r').querySelector('.cd').style.height = me.cds.r * 100 + '%';
-  $('pot-count').textContent = me.potions;
+  const wh = combat.hudHTML();
+  if ($('abilities').innerHTML !== wh) $('abilities').innerHTML = wh;
+  $('crosshair').classList.toggle('hidden', combat.inCar() || me.downed);
+  const car = G.state?.cars?.find((c) => c[7].includes(G.myId));
+  $('cartimer').classList.toggle('hidden', !car);
+  if (car) $('cartimer').textContent = `🚗 ${Math.floor(car[8] / 60)}:${String(car[8] % 60).padStart(2, '0')}`;
 
   const [qi, qp] = G.quest;
   const q = QUESTS[qi];
@@ -881,7 +887,7 @@ function loop(now) {
     G.sendAcc += dt;
     if (G.sendAcc >= 0.05) {
       G.sendAcc = 0;
-      sendToHost({ t: 'p', x: r2(me.x), y: r2(me.y), z: r2(me.z), ry: r2(me.ry), mv: me.moving ? 1 : 0, a: me.a, ak: me.ak, fl: me.flipN, e: keys.KeyE && !G.chatOpen ? 1 : 0 });
+      sendToHost({ t: 'p', x: r2(me.x), y: r2(me.y), z: r2(me.z), ry: r2(me.ry), mv: me.moving ? 1 : 0, a: me.a, ak: me.ak, fl: me.flipN, e: keys.KeyE && !G.chatOpen ? 1 : 0, w: combat.weaponIndex(), car: combat.carState() });
     }
     updateCamera();
     updateViews(dt, t);
@@ -903,6 +909,7 @@ function loop(now) {
   composer.render();
 }
 requestAnimationFrame(loop);
+combat.initCombat({ G, me, cam, keys, camera, scene, fx, views, send: sendToHost, addChat, onAttackAnim, isLocked: () => locked, getHeight: (x, z) => getHeight(x, z), cameraBlocked: (x, y, z) => cameraBlocked(x, y, z), roofAt: (x, z, y) => roofAt(x, z, y), resolveCollision: (o, r) => resolveCollision(o, r) });
 
 // Если хост свернул вкладку, браузер останавливает отрисовку — но мир должен жить дальше
 setInterval(() => {
@@ -914,4 +921,4 @@ setInterval(() => {
 }, 50);
 
 // Для отладки из консоли браузера
-window.__game = { G, me, cam, keys, useAbility, scene, fx, frame: (dt = 0.016) => { updateLocal(dt); updateCamera(); updateViews(dt, performance.now() / 1000); world?.update(performance.now() / 1000); fx.update(dt); composer.render(); }, setLocked: (v) => { locked = v; } };
+window.__game = { G, me, cam, keys, combat, scene, fx, frame: (dt = 0.016) => { if (G.isHost) { G.sim.update(dt); applyState(G.sim.snapshot()); } G.sendAcc = 1; sendToHost({ t: 'p', x: r2(me.x), y: r2(me.y), z: r2(me.z), ry: r2(me.ry), mv: me.moving ? 1 : 0, a: me.a, ak: me.ak, fl: me.flipN, w: combat.weaponIndex(), car: combat.carState() }); updateLocal(dt); updateCamera(); updateViews(dt, performance.now() / 1000); world?.update(performance.now() / 1000); fx.update(dt); composer.render(); }, setLocked: (v) => { locked = v; } };

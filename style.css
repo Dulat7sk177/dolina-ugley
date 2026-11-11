@@ -200,3 +200,9 @@ button.back:hover { color: var(--text); background: none; }
 #status { position: sticky; bottom: -20px; margin: 12px -28px -20px; padding: 10px 16px; background: var(--panel); border-top: 1px solid var(--panel-border); font-size: 15px; font-weight: 600; color: var(--gold); }
 #status:empty { display: none; }
 @media (max-width: 820px) { .classes { grid-template-columns: repeat(2, 1fr); } }
+
+/* ===== выбор качества графики ===== */
+select { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid #4a3d28; background: #1c1712; color: var(--text); font-size: 15px; }
+#q-now { color: var(--gold); text-transform: none; letter-spacing: 0; }
+.qrow { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 14px; }
+.qrow select { width: auto; flex: 1; }

@@ -1,6 +1,6 @@
 // Симуляция на стороне хоста: враги, урон, опыт, задания. Клиенты получают снимки состояния.
 import { CLASSES, ENEMIES, ZONES, QUESTS, xpNeed } from './config.js';
-import { getHeight, resolveCollision, cameraBlocked } from './maps.js';
+import { getHeight, resolveCollision, cameraBlocked, isFree, places } from './maps.js';
 import { resolveBoxes, pointBlocked } from './buildings.js';
 import { LOOT } from './interiors.js';
 import { MAP } from './config.js';
@@ -19,13 +19,81 @@ export class HostSim {
     if (MAP.id === 'astana') for (const l of LOOT) this.drops.push({ id: nextId++, x: l.x, y: l.y, z: l.z, t: Infinity, perm: true, hidden: 0 });
     this.level = 1; this.xp = 0; this.questIdx = 0; this.questProg = 0;
     this.time = 0; this.wipeT = 0;
+    // режим волн: раунд = 3 волны + босс в одном из районов города
+    this.wv = MAP.mode === 'waves' ? { round: 0, wave: 0, phase: 'rest', t: 6, toSpawn: 0, place: null, used: [], safe: { x: ZONES.village.x, z: ZONES.village.z }, spawnT: 0, bossId: 0 } : null;
     for (const [key, z] of Object.entries(ZONES)) {
       if (!z.enemy || z.enemy === 'boss') continue;
       for (let i = 0; i < z.count; i++) this.spawnEnemy(z.enemy, key);
     }
   }
 
-  spawnPoint() { const a = Math.random() * Math.PI * 2, d = 3 + Math.random() * 2.5; return { x: ZONES.village.x + Math.sin(a) * d, z: ZONES.village.z + Math.cos(a) * d }; }
+  spawnPoint() {
+    const c = this.wv ? this.wv.safe : ZONES.village;
+    for (let i = 0; i < 12; i++) { const a = Math.random() * Math.PI * 2, d = 3 + Math.random() * 2.5, x = c.x + Math.sin(a) * d, z = c.z + Math.cos(a) * d; if (!this.wv || i === 11 || isFree(x, z)) return { x, z }; }
+  }
+
+  // ===== режим волн =====
+  waveLive() { return this.enemies.filter((e) => e.wave && !e.dead); }
+  // свободная точка в 28–50 м от случайного стоящего игрока
+  nearPlayerPoint() {
+    const st = [...this.players.values()].filter((p) => !p.downed && p.y < 400);
+    if (!st.length) return null;
+    for (let i = 0; i < 14; i++) {
+      const p = st[Math.floor(Math.random() * st.length)], a = Math.random() * Math.PI * 2, d = 28 + Math.random() * 22;
+      const x = p.x + Math.sin(a) * d, z = p.z + Math.cos(a) * d;
+      if (isFree(x, z) && Math.hypot(x - ZONES.village.x, z - ZONES.village.z) > ZONES.village.r + 4) return { x, z };
+    }
+    return null;
+  }
+  nextRound() {
+    const w = this.wv, ps = [...this.players.values()];
+    w.round++; w.wave = 0;
+    const cx = ps.reduce((a, p) => a + p.x, 0) / (ps.length || 1), cz = ps.reduce((a, p) => a + p.z, 0) / (ps.length || 1);
+    let list = places().filter((p) => !w.used.includes(p.n));
+    if (!list.length) { w.used = []; list = places(); }
+    // район в 0.5–1.5 км от отряда: дойти можно и пешком, но лучше на машине
+    list = list.map((p) => { const d = Math.hypot(p.x - cx, p.z - cz); return { p, s: Math.abs(d - 900) + (d < 350 ? 5000 : 0) + Math.random() * 500 }; }).sort((a, b) => a.s - b.s);
+    w.place = list.length ? list[0].p : { n: 'Байтерек', x: 60, z: -60 };
+    w.used.push(w.place.n);
+    this.enemies = this.enemies.filter((e) => e.type !== 'boss');
+    const e = { type: 'boss', zone: 'village', hx: w.place.x, hz: w.place.z, sleeper: true };
+    this.resetEnemy(e);
+    e.maxHp = Math.round(e.maxHp * (1 + 0.35 * (w.round - 1))); e.hp = e.maxHp;
+    this.enemies.push(e); w.bossId = e.id;
+    w.phase = 'rest'; w.t = 9;
+    this.events.push({ k: 'round', r: w.round, n: w.place.n }, { k: 'sys', text: `Раунд ${w.round}. Мутант замечен: ${w.place.n}. Сначала отбейте 3 волны!` });
+  }
+  startWave() {
+    const w = this.wv;
+    w.wave++; w.phase = 'wave'; w.spawnT = 0;
+    w.toSpawn = Math.min(48, 4 + 3 * w.round + 2 * this.players.size + 3 * w.wave);
+    this.events.push({ k: 'wave', r: w.round, w: w.wave, n: w.toSpawn });
+  }
+  updateWaves(dt) {
+    const w = this.wv;
+    if (!this.players.size) return;
+    if (w.round === 0) this.nextRound();
+    if (w.phase === 'rest' || w.phase === 'won') { w.t -= dt; if (w.t <= 0) { if (w.phase === 'won') this.nextRound(); else this.startWave(); } return; }
+    if (w.phase !== 'wave') return;
+    const live = this.waveLive();
+    w.spawnT -= dt;
+    if (w.toSpawn > 0 && w.spawnT <= 0 && live.length < 26) {
+      w.spawnT = 0.35;
+      const pt = this.nearPlayerPoint();
+      if (pt) {
+        const roll = Math.random(), type = w.wave === 1 ? 'minion' : w.wave === 2 ? (roll < 0.7 ? 'minion' : 'wolf') : roll < 0.55 ? 'minion' : roll < 0.8 ? 'wolf' : 'skeleton';
+        const e = { type, zone: 'village', hx: pt.x, hz: pt.z, wave: true };
+        this.resetEnemy(e);
+        e.maxHp = Math.round(e.maxHp * (1 + 0.15 * (w.round - 1))); e.hp = e.maxHp;
+        this.enemies.push(e); w.toSpawn--;
+      }
+    }
+    if (w.toSpawn <= 0 && live.length === 0) {
+      for (const p of this.players.values()) if (!p.downed) p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.25);
+      if (w.wave >= 3) { w.phase = 'boss'; this.events.push({ k: 'bossgo', n: w.place.n }, { k: 'sys', text: `Волны отбиты! Мутант ждёт вас: ${w.place.n}` }); }
+      else { w.phase = 'rest'; w.t = 7; this.events.push({ k: 'sys', text: `Волна ${w.wave} отбита. Следующая через 7 секунд…` }); }
+    }
+  }
   maxHpFor(cls) { return CLASSES[cls].hp + (this.level - 1) * 15; }
 
   spawnEnemy(type, zoneKey) {
@@ -47,7 +115,7 @@ export class HostSim {
     e.hp = e.maxHp;
   }
   checkBoss() {
-    if (this.questIdx >= BOSS_QUEST && !this.enemies.some((e) => e.type === 'boss')) {
+    if (!this.wv && this.questIdx >= BOSS_QUEST && !this.enemies.some((e) => e.type === 'boss')) {
       this.spawnEnemy('boss', 'arena');
       this.events.push({ k: 'sys', text: 'Гримвальд Рогатый пробудился на арене!' });
     }
@@ -205,6 +273,10 @@ export class HostSim {
 
   damageEnemy(e, dmg, byId, ranged) {
     if (e.dead) return;
+    if (e.sleeper && this.wv && this.wv.phase !== 'boss') { // босс неуязвим, пока не отбиты волны
+      if (!(e.immT > this.time)) { e.immT = this.time + 0.8; this.events.push({ k: 'dmg', x: r2(e.x), y: r2(getHeight(e.x, e.z) + ENEMIES[e.type].scale * 2.1), z: r2(e.z), v: 'сначала волны!', c: 'enemy' }); }
+      return;
+    }
     const crit = Math.random() < (ranged ? 0.06 : 0.1);
     dmg = Math.round(dmg * (0.85 + Math.random() * 0.3) * (crit ? 2 : 1));
     e.hp -= dmg; e.target = byId; e.aggroLock = 6;
@@ -219,6 +291,13 @@ export class HostSim {
     e.respawnT = e.type === 'boss' ? 180 : 25;
     this.events.push({ k: 'die', id: e.id });
     this.gainXp(def.xp);
+    if (this.wv && e.type === 'boss') {
+      const w = this.wv;
+      w.phase = 'won'; w.t = 12; w.safe = { x: e.x, z: e.z };
+      this.gainXp(250 + 120 * w.round);
+      for (const p of this.players.values()) { p.downed = false; p.reviveT = 0; p.hp = p.maxHp; p.potions = Math.min(5, p.potions + 1); }
+      this.events.push({ k: 'bosswin', r: w.round, n: w.place.n }, { k: 'sys', text: `Мутант повержен (${w.place.n})! Новый раунд через 12 секунд.` });
+    }
     const q = QUESTS[this.questIdx];
     if (q && q.type === e.type) {
       this.questProg++;
@@ -298,11 +377,18 @@ export class HostSim {
           p.downed = false; p.reviveT = 0; p.hp = Math.round(p.maxHp * 0.6); p.x = sp.x; p.z = sp.z;
           this.events.push({ k: 'tp', id: p.id, x: r2(sp.x), z: r2(sp.z) });
         }
+        if (this.wv) { // волна начинается заново
+          const w = this.wv;
+          this.enemies = this.enemies.filter((e) => !e.wave);
+          if (w.phase === 'wave') { w.wave--; w.phase = 'rest'; w.t = 8; }
+        }
         this.events.push({ k: 'wipe' });
       }
     } else this.wipeT = 0;
 
     // --- враги ---
+    if (this.wv) this.updateWaves(dt);
+    if (this.wv) this.enemies = this.enemies.filter((e) => !(e.dead && (e.wave || e.type === 'boss')));
     const live = [];
     for (const e of this.enemies) {
       if (e.dead) {
@@ -327,7 +413,11 @@ export class HostSim {
 
       const homeD = Math.hypot(e.x - e.hx, e.z - e.hz);
       let tgt = null, td = Infinity;
-      if (homeD < 42) {
+      const asleep = e.sleeper && this.wv && this.wv.phase !== 'boss';
+      if (e.wave) { // волна сама идёт на игроков, где бы они ни были
+        for (const p of standing) { const d = dist(p, e); if (d < td && p.y < 400) { tgt = p; td = d; } }
+        if (tgt && td > 95) { const pt = this.nearPlayerPoint(); if (pt) { e.x = pt.x; e.z = pt.z; } continue; }
+      } else if (homeD < 42 && !asleep) {
         for (const p of standing) {
           const d = dist(p, e);
           const range = e.target === p.id && e.aggroLock > 0 ? 40 : def.aggro;
@@ -340,7 +430,7 @@ export class HostSim {
         e.ry = Math.atan2(dx, dz);
         const reach = def.range + 0.4;
         if (td > reach - 0.4) { e.x += (dx / td) * spd * dt; e.z += (dz / td) * spd * dt; e.mv = 1; }
-        if (td < reach && e.atkCd <= 0) {
+        if (td < reach && e.atkCd <= 0 && !tgt.car && reachY(tgt, e)) {
           e.atkCd = def.cd; e.atkSeq++;
           this.damagePlayer(tgt, def.dmg * (1 + 0.08 * (this.level - 1)));
         }
@@ -463,6 +553,7 @@ export class HostSim {
       cars: this.cars.map((c) => [c.id, c.owner, r2(c.x), r2(c.y), r2(c.z), r2(c.ry), r2(c.v), c.seats, Math.ceil(c.t)]),
       dr: this.drops.filter((d) => !(d.hidden > 0)).map((d) => (d.y !== undefined ? [d.id, r2(d.x), r2(d.z), r2(d.y)] : [d.id, r2(d.x), r2(d.z)])),
       q: [this.questIdx, this.questProg],
+      wv: this.wv && this.wv.place ? [this.wv.round, this.wv.wave, this.wv.phase, this.wv.toSpawn + this.waveLive().length, this.wv.place.x, this.wv.place.z, this.wv.place.n, Math.ceil(Math.max(0, this.wv.t))] : undefined,
       lv: [this.level, Math.floor(this.xp), xpNeed(this.level)],
       ev: this.events,
     };

@@ -273,18 +273,33 @@ const PART_MATS = () => ({
 const PAINTS = [0xf2f2ee, 0xd8d8d4, 0x1a1a1c, 0x2b2d30, 0x8e9196, 0x5b5f64, 0x7b1d1d, 0x1d3557, 0x2e4a3a, 0xc8b892, 0x6a4a2a, 0xa52a2a];
 const BUS_PAINTS = [0x2a6fb8, 0xf2c230, 0xe8e8e2, 0x2a8a5a];
 
+const CAR_CACHE = {};
+const REST_COLORS = { glass: 0x0b1215, rubber: 0x141414, metal: 0x9a9ea2, trim: 0x1c1d1f, head: 0xdfe6ea, tail: 0x8a1010 };
 // Парк машин: по одной InstancedMesh на каждую деталь каждого типа
 export class CarFleet {
   constructor(scene, cap, rng) {
     this.rng = rng; this.types = {};
-    const mats = PART_MATS();
+    const mats = (CAR_CACHE.mats ||= PART_MATS());
     for (const k of CAR_KINDS) {
-      const geos = buildCar(CAR_TYPES[k]);
-      const n = k === 'bus' ? Math.ceil(cap * 0.05) : cap;
+      // кузов красится отдельно, остальное (стёкла, колёса, фары) слито в одну деталь с цветом в вершинах — меньше вызовов отрисовки
+      const geos = (CAR_CACHE[k] ||= (() => {
+        const g = buildCar(CAR_TYPES[k]), rest = [];
+        for (const [part, geo] of Object.entries(g)) {
+          if (part === 'paint') continue;
+          const col = new THREE.Color(REST_COLORS[part]), n = geo.attributes.position.count, a = new Float32Array(n * 3);
+          for (let i = 0; i < n; i++) { a[i * 3] = col.r; a[i * 3 + 1] = col.g; a[i * 3 + 2] = col.b; }
+          geo.setAttribute('color', new THREE.BufferAttribute(a, 3)); rest.push(geo);
+        }
+        const out = { paint: g.paint, rest: mergeGeometries(rest) };
+        out.paint.userData.shared = out.rest.userData.shared = true;
+        return out;
+      })());
+      mats.rest ||= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.45 });
+      const n = k === 'bus' ? Math.ceil(cap * 0.1) : cap;
       const ims = {};
       for (const [part, geo] of Object.entries(geos)) {
         const im = new THREE.InstancedMesh(geo, mats[part], n);
-        im.castShadow = part === 'paint' || part === 'rubber'; im.receiveShadow = true;
+        im.castShadow = part === 'paint'; im.receiveShadow = true;
         scene.add(im); ims[part] = im;
       }
       this.types[k] = { ims, n: 0, cap: n };
@@ -303,7 +318,7 @@ export class CarFleet {
     if (!t || t.n >= t.cap) return false;
     const i = t.n++;
     for (const [part, im] of Object.entries(t.ims)) {
-      const gone = burnt && (part === 'glass' || part === 'head' || part === 'tail' || part === 'rubber');
+      const gone = burnt && part === 'rest';
       im.setMatrixAt(i, gone ? this.zero : matrix);
     }
     const paints = kind === 'bus' ? BUS_PAINTS : PAINTS;

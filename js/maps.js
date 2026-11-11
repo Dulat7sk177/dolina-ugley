@@ -13,6 +13,8 @@ export let cameraBlocked = (x, y, z) => towerBlocked(x, y, z, 0.25);
 export let currentMap = 'valley';
 export let roofAt = () => -Infinity;
 export let doors = [];
+export let isFree = () => true; // можно ли поставить сюда врага
+export let places = () => []; // районы, где ждут боссы
 
 export function useMap(id) {
   setMap(id);
@@ -25,5 +27,7 @@ export function useMap(id) {
   buildWorld = m.buildWorld;
   roofAt = currentMap === 'astana' ? astana.roofAt : () => -Infinity;
   doors = currentMap === 'astana' ? astana.doors : [];
+  isFree = currentMap === 'astana' ? astana.isFree : () => true;
+  places = currentMap === 'astana' ? astana.places : () => [];
   cameraBlocked = currentMap === 'astana' ? astana.cameraBlocked : (x, y, z) => towerBlocked(x, y, z, 0.25);
 }

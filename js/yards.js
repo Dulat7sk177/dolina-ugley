@@ -5,6 +5,7 @@ import { tbox, tcyl } from './world.js';
 
 const ni = (g) => (g.index ? g.toNonIndexed() : g);
 // Собирает геометрию по материалам и добавляет на сцену одним мешем на материал
+let PLAIN = null, FLATM = null;
 class Batch {
   constructor() { this.map = new Map(); }
   add(mat, geo) { if (!this.map.has(mat)) this.map.set(mat, []); this.map.get(mat).push(ni(geo)); }
@@ -14,10 +15,23 @@ class Batch {
     for (const [mat, geo] of parts) this.add(mat, geo.clone().applyMatrix4(m));
   }
   flush(scene, shadow = true) {
+    // однотонные материалы сливаем в один меш с цветом в вершинах — в разы меньше вызовов отрисовки
+    const plain = [], flat = [];
+    for (const [mat, geos] of [...this.map]) {
+      if (mat.map || mat.transparent || mat.side !== THREE.FrontSide) continue;
+      const list = mat.polygonOffset ? flat : plain;
+      for (const g of geos) { const n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) { a[i * 3] = mat.color.r; a[i * 3 + 1] = mat.color.g; a[i * 3 + 2] = mat.color.b; } g.setAttribute('color', new THREE.BufferAttribute(a, 3)); list.push(g); }
+      this.map.delete(mat);
+    }
+    PLAIN ||= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, metalness: 0.15 });
+    FLATM ||= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    if (plain.length) this.map.set(PLAIN, plain);
+    if (flat.length) this.map.set(FLATM, flat);
     for (const [mat, geos] of this.map) {
       for (let i = 0; i < geos.length; i += 4000) { // крупные пачки, чтобы не упереться в лимиты
         const mesh = new THREE.Mesh(mergeGeometries(geos.slice(i, i + 4000)), mat);
-        mesh.castShadow = shadow; mesh.receiveShadow = true;
+        if (!mesh.geometry) continue;
+        mesh.castShadow = shadow && mat !== FLATM; mesh.receiveShadow = true;
         scene.add(mesh);
       }
     }
@@ -25,11 +39,12 @@ class Batch {
 }
 const parts = (...list) => { const m = new Map(); for (const [mat, geo] of list) { if (!m.has(mat)) m.set(mat, []); m.get(mat).push(ni(geo)); } for (const [k, v] of m) m.set(k, mergeGeometries(v)); return m; };
 
+let MATS = null;
 export function buildYards(ctx) {
-  const { scene, city, rng, getHeight, addCircle, pip, M, T, isRoad, inBuilding, nearZone, doors } = ctx;
+  const { scene, city, rng, getHeight, addCircle, pip, M, T, isRoad, inBuilding, nearZone, doors, rect, inTile } = ctx;
   const B = new Batch();
   const C = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.75, ...o });
-  const mat = {
+  const mat = MATS ?? (MATS = {
     red: C(0xb0302a), blue: C(0x2a5aa8), yellow: C(0xe0b030), green: C(0x2f8a4a), steel: C(0x8a9096, { metalness: 0.7, roughness: 0.4 }),
     dark: C(0x26282a, { metalness: 0.5, roughness: 0.5 }), wood: new THREE.MeshStandardMaterial({ map: T.bark_brown_02.map, roughness: 0.9 }),
     sand: C(0xd8c088, { roughness: 1 }), concrete: new THREE.MeshStandardMaterial({ map: T.concrete_floor_worn_001.map, color: 0xb8b6b0, roughness: 0.95 }),
@@ -41,7 +56,7 @@ export function buildYards(ctx) {
     door: C(0x4a3424, { roughness: 0.6 }), canopy: C(0xb8b4aa, { roughness: 0.85 }),
     binG: C(0x2f5a3a, { metalness: 0.4, roughness: 0.6 }), binB: C(0x2a4a7a, { metalness: 0.4, roughness: 0.6 }),
     bag: C(0x151617, { roughness: 0.35, metalness: 0.1 }), tire: C(0x111111, { roughness: 0.95 }), paper: C(0xdcd8cc, { roughness: 1, side: THREE.DoubleSide }),
-  };
+  });
   const centroid = (p) => { let x = 0, z = 0; const n = p.length / 2; for (let i = 0; i < p.length; i += 2) { x += p[i]; z += p[i + 1]; } return [x / n, z / n]; };
   const longestEdge = (p) => { let best = 0, bi = 0; for (let i = 0; i < p.length; i += 2) { const k = (i + 2) % p.length, l = Math.hypot(p[k] - p[i], p[k + 1] - p[i + 1]); if (l > best) { best = l; bi = i; } } const k = (bi + 2) % p.length; return { ax: p[bi], az: p[bi + 1], bx: p[k], bz: p[k + 1], len: best, ang: Math.atan2(p[k] - p[bi], p[k + 1] - p[bi + 1]) }; };
   const flatPoly = (p, y, m) => {
@@ -190,12 +205,13 @@ export function buildYards(ctx) {
     if (!CURB.has(r.t) || r.b || r.tn) continue;
     for (let i = 0; i + 3 < r.p.length; i += 2) {
       const ax = r.p[i], az = r.p[i + 1], bx = r.p[i + 2], bz = r.p[i + 3], l = Math.hypot(bx - ax, bz - az);
-      if (l < 1 || Math.abs(ax) > 2050 || Math.abs(az) > 1200) continue;
+      if (l < 1) continue;
       const ang = Math.atan2(bx - ax, bz - az), ux = (bx - ax) / l, uz = (bz - az) / l, cx = (ax + bx) / 2, cz = (az + bz) / 2, y = getHeight(cx, cz);
       // режем на куски по ~4 м и пропускаем те, что выходят на перекрёсток (снаружи бордюра — снова дорога)
       const pieces = Math.max(1, Math.round(l / 4)), pl = l / pieces;
       for (let k = 0; k < pieces; k++) {
         const t = (k + 0.5) / pieces, px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
+        if (!inTile(px, pz)) continue;
         for (const s of [-1, 1]) {
           const off = r.w / 2 + 0.12, x = px + uz * off * s, z = pz - ux * off * s;
           if (isRoad(px + uz * (r.w / 2 + 1.2) * s, pz - ux * (r.w / 2 + 1.2) * s)) continue;
@@ -206,6 +222,7 @@ export function buildYards(ctx) {
       // прерывистая осевая на крупных улицах (кроме перекрёстков)
       if (['primary', 'secondary', 'tertiary'].includes(r.t)) for (let d = 1.5; d < l - 1.5; d += 6) {
         const mx = ax + ux * (d + 1.5), mz = az + uz * (d + 1.5), side = r.w / 2 + 1.5;
+        if (!inTile(mx, mz)) continue;
         if (isRoad(mx + uz * side, mz - ux * side) && isRoad(mx - uz * side, mz + ux * side)) continue;
         B.add(mat.paint, tbox(0.15, 0.02, 3, 1).rotateY(ang).translate(mx, y + 0.03, mz));
       }
@@ -242,8 +259,8 @@ export function buildYards(ctx) {
   const PAPER = parts([mat.paper, new THREE.PlaneGeometry(0.3, 0.4).rotateX(-Math.PI / 2).translate(0, 0.03, 0)]);
   const BARRIER = parts([mat.concrete, mergeGeometries([ni(tbox(0.6, 0.35, 3, 1).translate(0, 0.17, 0)), ni(tbox(0.25, 0.55, 3, 1).translate(0, 0.62, 0))])]);
   let nJunk = 0;
-  for (let k = 0; k < 2600; k++) {
-    const x = (rng() - 0.5) * 3900, z = (rng() - 0.5) * 2200;
+  for (let k = 0; k < 70; k++) {
+    const x = rect[0] + rng() * rect[2], z = rect[1] + rng() * rect[2];
     if (inBuilding(x, z) || nearZone(x, z, 2) || Math.hypot(x, z) < 30 || getHeight(x, z) < -0.4) continue;
     const roll = rng(), y = getHeight(x, z);
     if (roll < 0.45) B.place(PAPER, x, y, z, rng() * 6.28, 0.8 + rng());
@@ -261,11 +278,11 @@ export function buildYards(ctx) {
     const src = [];
     M.shrub_03.updateMatrixWorld(true);
     M.shrub_03.traverse((o) => { if (o.isMesh) src.push({ geo: o.geometry.clone().applyMatrix4(o.matrixWorld), mat: o.material }); });
-    const N = 1400, ims = src.map(({ geo, mat: m }) => { const im = new THREE.InstancedMesh(geo, m, N); im.castShadow = true; im.receiveShadow = true; scene.add(im); return im; });
+    const N = ctx.bushN ?? 30, ims = src.map(({ geo, mat: m }) => { const im = new THREE.InstancedMesh(geo, m, N); im.castShadow = true; im.receiveShadow = true; scene.add(im); return im; });
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sv = new THREE.Vector3(), pv = new THREE.Vector3();
     const put = (x, z, s) => { if (nBush >= N) return; e.set(0, rng() * 6.28, 0); q.setFromEuler(e); sv.set(s, s * (0.8 + rng() * 0.3), s); pv.set(x, getHeight(x, z), z); m4.compose(pv, q, sv); for (const im of ims) im.setMatrixAt(nBush, m4); nBush++; };
     for (const b of city.buildings) {
-      if (b.mh || b.h < 8 || nBush > N - 20) continue;
+      if (b.mh || b.h < 8 || nBush >= N) continue;
       const [cx, cz] = centroid(b.p);
       if (nearZone(cx, cz, 5)) continue;
       for (let i = 0; i < b.p.length; i += 2) {
@@ -274,7 +291,7 @@ export function buildYards(ctx) {
         const mx = (ax + bx) / 2, mz = (az + bz) / 2;
         if ((mx + nx - cx) ** 2 + (mz + nz - cz) ** 2 < (mx - nx - cx) ** 2 + (mz - nz - cz) ** 2) { nx = -nx; nz = -nz; }
         for (let d = 3; d < l - 3; d += 4.5) {
-          if (rng() < 0.55) continue;
+          if (rng() < 0.93) continue;
           const x = ax + ((bx - ax) * d) / l + nx * 1.4, z = az + ((bz - az) * d) / l + nz * 1.4;
           if (isRoad(x, z) || inBuilding(x, z)) continue;
           put(x, z, 0.5 + rng() * 0.35);

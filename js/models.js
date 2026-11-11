@@ -56,6 +56,31 @@ function loadFBX(loader, name) {
   return fileCache.get(name);
 }
 
+// Некоторые модели состоят из сотен кусков с общими вершинами и одним материалом — склеиваем их,
+// иначе каждый кусок рисуется отдельным вызовом (у одной модели их было 264)
+function mergeSkinnedParts(scene) {
+  const ids = new WeakMap(); let next = 1;
+  const id = (o) => { if (!ids.has(o)) ids.set(o, next++); return ids.get(o); };
+  const groups = new Map();
+  scene.traverse((o) => {
+    if (!o.isSkinnedMesh || Array.isArray(o.material) || !o.geometry.index) return;
+    const k = [o.material.map ? o.material.map.uuid : o.material.color.getHexString(), id(o.geometry.attributes.position), id(o.parent), o.skeleton.bones.map((b) => b.name).join(",")].join("|");
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(o);
+  });
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const total = list.reduce((n, o) => n + o.geometry.index.count, 0), idx = new Uint32Array(total);
+    let off = 0;
+    for (const o of list) { idx.set(o.geometry.index.array, off); off += o.geometry.index.count; }
+    const first = list[0], g = new THREE.BufferGeometry();
+    for (const [name, attr] of Object.entries(first.geometry.attributes)) g.setAttribute(name, attr);
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    first.geometry = g;
+    for (const o of list.slice(1)) o.parent.remove(o);
+  }
+}
+
 export async function loadModels(onProgress) {
   const loader = new FBXLoader();
   const files = new Set();
@@ -82,6 +107,7 @@ export async function loadModels(onProgress) {
         o.material = Array.isArray(o.material) ? mats : mats[0];
       }
     });
+    mergeSkinnedParts(scene);
     scene.updateMatrixWorld(true);
     const box = new THREE.Box3();
     scene.traverse((o) => { if (o.isSkinnedMesh) box.expandByObject(o, true); });

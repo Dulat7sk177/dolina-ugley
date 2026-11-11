@@ -71,6 +71,7 @@
           <div><kbd>Enter</kbd> чат, <kbd>Esc</kbd> пауза</div>
         </div>
         <div id="ability-help"></div>
+        <div class="qrow"><span>Графика:</span> <select id="quality2"><option value="auto">Авто (по мощности компьютера)</option><option value="low">Низкое</option><option value="medium">Среднее</option><option value="high">Высокое</option><option value="ultra">Ультра</option></select></div>
       </div>
     </div>
     <div id="disconnect" class="hidden">
@@ -88,6 +89,8 @@
       <div id="scr-mode" class="scr">
         <label for="name">Имя героя</label>
         <input id="name" maxlength="16" placeholder="Герой">
+        <label for="quality">Графика <span id="q-now"></span></label>
+        <select id="quality"><option value="auto">Авто (по мощности компьютера)</option><option value="low">Низкое</option><option value="medium">Среднее</option><option value="high">Высокое</option><option value="ultra">Ультра</option></select>
         <div class="modes">
           <button class="mode-btn" id="btn-mode-single"><span>🗡️</span><b>Одиночная игра</b><small>Сразу в бой, без сети</small></button>
           <button class="mode-btn" id="btn-mode-coop"><span>👥</span><b>Кооператив</b><small>До 4 игроков по коду комнаты</small></button>

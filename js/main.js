@@ -7,6 +7,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { setQuality as setCityQuality } from './astana.js';
 import { makeCharacter, animateRig, playAttack, playHit, playCheer, playDeath, loadModels } from './models.js';
 import { FX } from './particles.js';
 import { surfaceAt, ceilingAt, resolveBoxes, pointBlocked } from './buildings.js';
@@ -55,8 +57,12 @@ const fx = new FX(scene);
 fx.setScale(renderer, camera);
 
 // Постобработка: мягкое свечение огня, фонарей и магии
-const composer = new EffectComposer(renderer);
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: 4 }));
 composer.addPass(new RenderPass(scene, camera));
+const gtao = new GTAOPass(scene, camera, innerWidth, innerHeight);
+gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.1, samples: 12 });
+gtao.enabled = false;
+composer.addPass(gtao);
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.6, 0.9);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
@@ -66,8 +72,71 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
+  gtao.setSize(innerWidth, innerHeight);
   fx.setScale(renderer, camera);
 });
+
+// ================= Качество графики =================
+// Чем мощнее компьютер, тем дальше видно город, чётче тени и картинка
+const QUALITIES = {
+  low: { label: 'Низкое', pr: 1, aa: 0, shadow: 1024, shadowR: 32, meshR: 300, view: 1000, grass: 0.4, ao: false, budget: 4, aniso: 2 },
+  medium: { label: 'Среднее', pr: 1.25, aa: 2, shadow: 2048, shadowR: 48, meshR: 450, view: 1700, grass: 1, ao: false, budget: 6, aniso: 8 },
+  high: { label: 'Высокое', pr: 1.5, aa: 4, shadow: 4096, shadowR: 80, meshR: 650, view: 2500, grass: 2, ao: false, budget: 8, aniso: 16 },
+  ultra: { label: 'Ультра', pr: 2, aa: 4, shadow: 4096, shadowR: 110, meshR: 900, view: 3600, grass: 3.5, ao: true, budget: 12, aniso: 16 },
+};
+const Q_ORDER = ['low', 'medium', 'high', 'ultra'];
+// грубая оценка видеокарты по её названию
+function detectQuality() {
+  let name = '';
+  try { const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info'); name = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : ''; } catch { /* нет доступа */ }
+  G_GPU = name;
+  if (/RTX\s?(30[789]|40[6789]|50)\d|RX\s?(69|7[789]|9)\d\d|M[234]\s?(Max|Ultra)/i.test(name)) return 'high'; // до «Ультра» авто-режим поднимется сам, если кадров хватает
+  if (/RTX|GTX\s?(1[06][678]|1080|1070)|RX\s?(5[67]|6[678]|7[67])\d\d|Arc|Apple M|Radeon Pro/i.test(name)) return 'high';
+  if (/SwiftShader|llvmpipe|Mali|Adreno|PowerVR|HD Graphics [2-5]\d{3}\b/i.test(name)) return 'low';
+  return 'medium';
+}
+let G_GPU = '', qChoice = 'auto', qLevel = 'medium';
+try { qChoice = localStorage.getItem('rpg-quality') || 'auto'; } catch { /* ignore */ }
+function applyQuality(level) {
+  qLevel = level;
+  const q = QUALITIES[level], pr = Math.min(window.devicePixelRatio || 1, q.pr);
+  renderer.setPixelRatio(pr); composer.setPixelRatio(pr);
+  renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
+  for (const rt of [composer.renderTarget1, composer.renderTarget2]) if (rt.samples !== q.aa) { rt.samples = q.aa; rt.dispose(); }
+  if (sun.shadow.mapSize.x !== q.shadow) { sun.shadow.mapSize.set(q.shadow, q.shadow); sun.shadow.map?.dispose(); sun.shadow.map = null; }
+  Object.assign(sun.shadow.camera, { left: -q.shadowR, right: q.shadowR, top: q.shadowR, bottom: -q.shadowR, far: 260 });
+  sun.shadow.camera.updateProjectionMatrix();
+  gtao.enabled = q.ao;
+  setCityQuality({ meshR: q.meshR, view: q.view, grass: q.grass, budget: q.budget });
+  applyViewDistance();
+  const el = $('q-now'); if (el) el.textContent = qChoice === 'auto' ? `авто → ${q.label}` : '';
+}
+// в Астане дальность видимости и дымка зависят от качества
+function applyViewDistance() {
+  if (MAP.id !== 'astana') return;
+  const q = QUALITIES[qLevel];
+  scene.fog.density = 1.75 / q.view;
+  camera.far = q.view * 1.25 + 300; camera.updateProjectionMatrix();
+}
+function setQualityChoice(v) {
+  qChoice = v;
+  try { localStorage.setItem('rpg-quality', v); } catch { /* ignore */ }
+  for (const id of ['quality', 'quality2']) { const el = $(id); if (el) el.value = v; }
+  applyQuality(v === 'auto' ? detectQuality() : v);
+  fpsAcc = 0; fpsN = 0;
+}
+// авто-режим: если кадров мало — снижаем качество, если много — повышаем
+let fpsAcc = 0, fpsN = 0, fpsHold = 0;
+function autoTune(dt) {
+  if (qChoice !== 'auto' || !G.started || world?.loading?.() > 0) return;
+  fpsAcc += dt; fpsN++;
+  if (fpsAcc < 4) return;
+  const fps = fpsN / fpsAcc, i = Q_ORDER.indexOf(qLevel);
+  fpsAcc = 0; fpsN = 0;
+  if (fps < 32 && i > 0) { applyQuality(Q_ORDER[i - 1]); fpsHold = 6; }
+  else if (fps > 57 && i < Q_ORDER.length - 1 && --fpsHold < 0 && fpsUp < 2) { fpsUp++; applyQuality(Q_ORDER[i + 1]); fpsHold = 3; }
+}
+let fpsUp = 0;
 
 // ================= Состояние =================
 const G = { started: false, isHost: false, myId: null, sim: null, net: null, code: null, sendAcc: 0, snapAcc: 0, hudAcc: 0, partyAcc: 0, state: null, quest: [0, 0], lv: [1, 0, 100], chatOpen: false, hurt: 0 };
@@ -230,6 +299,7 @@ async function loadMap(id) {
   renderer.toneMappingExposure = MAP.exposure;
   bloom.strength = MAP.bloom;
   camera.far = MAP.far || 600; camera.updateProjectionMatrix();
+  applyViewDistance();
   $('attrib').textContent = MAP.id === 'astana' ? 'Данные карты © участники OpenStreetMap (ODbL)' : '';
   await modelsReady;
   await loadWorldAssets(renderer, scene, (p) => setStatus(`Загрузка карты «${MAP.title}»… ${Math.round(p * 100)}%`));
@@ -439,7 +509,7 @@ function enterGame() {
   me.rig = makeCharacter(me.cls);
   scene.add(me.rig.root);
   me.x = ZONES.village.x + (Math.random() - 0.5) * 6; me.z = ZONES.village.z - 4; me.y = getHeight(me.x, me.z);
-  const z0 = ZONES[QUESTS[0].zone];
+  const z0 = QUESTS[0] ? ZONES[QUESTS[0].zone] : { x: me.x, z: me.z - 10 };
   cam.yaw = Math.atan2(z0.x - me.x, z0.z - me.z);
   combat.setClass(me.cls);
   const cl = CLASSES[me.cls];
@@ -716,7 +786,10 @@ function handleEvent(ev) {
       break;
     case 'down': addChat(null, `${ev.name} повержен!`); break;
     case 'revive': addChat(null, `${ev.name} снова в строю`); break;
-    case 'wipe': banner('Отряд пал… Возрождение в деревне', 'red'); break;
+    case 'wave': banner(`Раунд ${ev.r} · волна ${ev.w} / 3`, ev.w === 3 ? 'red' : ''); break;
+    case 'bossgo': banner(`Мутант ждёт: ${ev.n}`, 'red'); break;
+    case 'bosswin': banner(`Мутант повержен! Раунд ${ev.r} пройден`); spawnPillar(me.x, me.y, me.z); playCheer(me.rig); break;
+    case 'wipe': banner(MAP.mode === 'waves' ? 'Отряд пал… Волна начнётся заново' : 'Отряд пал… Возрождение в деревне', 'red'); break;
     case 'chat': addChat(ev.from, ev.text); break;
     case 'sys': addChat(null, ev.text); break;
     case 'pickup': {
@@ -910,7 +983,7 @@ function ambient(dt) {
     ambAcc--;
     const a = Math.random() * 6.28, d = 4 + Math.random() * 26, x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d, h = getHeight(x, z);
     if (h < WATER_LEVEL) continue;
-    const forest = Math.hypot(x - ZONES.forest.x, z - ZONES.forest.z) < 40;
+    const forest = !!ZONES.forest && Math.hypot(x - ZONES.forest.x, z - ZONES.forest.z) < 40;
     fx.glow.emit(x, h + 0.4 + Math.random() * 1.8, z, rnd() * 0.4, rnd() * 0.2, rnd() * 0.4, forest ? 0xd8ff6a : 0xfff4c0, forest ? 0.14 : 0.07, 4 + Math.random() * 3, { alpha: forest ? 1 : 0.6 });
   }
   // пыль из-под ног
@@ -940,8 +1013,17 @@ function updateHUD() {
   const [qi, qp] = G.quest;
   const q = QUESTS[qi];
   if (q) { $('qtitle').textContent = q.title; $('qdesc').textContent = q.desc; $('qprog').textContent = `${qp} / ${q.need}`; }
-  else { $('qtitle').textContent = 'Долина спасена!'; $('qdesc').textContent = 'Свободная охота: враги возрождаются, Король тоже вернётся.'; $('qprog').textContent = ''; }
-  const zone = q ? ZONES[q.zone] : null;
+  else if (!G.state?.wv) { $('qtitle').textContent = 'Долина спасена!'; $('qdesc').textContent = 'Свободная охота: враги возрождаются, Король тоже вернётся.'; $('qprog').textContent = ''; }
+  let zone = q ? ZONES[q.zone] : null;
+  const wv = G.state?.wv;
+  if (wv) { // режим волн: раунд, волна, где ждёт босс
+    const [round, wave, phase, left, bx, bz, bn, tt] = wv;
+    $('qtitle').textContent = `Раунд ${round} · ` + (phase === 'boss' ? 'босс' : phase === 'won' ? 'победа!' : `волна ${Math.min(3, wave + (phase === 'rest' ? 1 : 0))} / 3`);
+    $('qdesc').textContent = phase === 'wave' ? 'Отбейте волну заражённых' : phase === 'rest' ? `Волна начнётся через ${tt} с` : phase === 'boss' ? `Убейте мутанта: ${bn}` : `Следующий раунд через ${tt} с`;
+    $('qprog').textContent = phase === 'wave' ? `осталось: ${left}` : '';
+    zone = { x: bx, z: bz, name: (phase === 'boss' ? 'Босс: ' : 'Логово босса: ') + bn };
+  }
+  if (MAP.id === 'astana') { const ld = world?.loading?.() || 0, txt = 'Данные карты © участники OpenStreetMap (ODbL)' + (ld ? ` · строим город: ${ld}` : ''); if ($('attrib').textContent !== txt) $('attrib').textContent = txt; }
   $('compass').classList.toggle('hidden', !zone);
   if (zone) {
     const dx = zone.x - me.x, dz = zone.z - me.z;
@@ -970,6 +1052,14 @@ function updateHUD() {
 function updateParty() {
   if (!G.state) return;
   $('party').innerHTML = G.state.pl.map((p) => `<div class="pm${p.d ? ' down' : ''}"><div class="pn"><span>${esc(p.n)}${p.id === G.myId ? ' (вы)' : ''}</span><small>${esc(CLASSES[p.c]?.name || '')}</small></div><div class="pbar"><i style="width:${(p.hp / p.mh) * 100}%"></i></div></div>`).join('');
+}
+
+// где нужен подробный город: вокруг себя; хосту — ещё и рельеф со стенами вокруг остальных игроков
+function worldFocus() {
+  const others = [];
+  if (G.isHost && G.sim) for (const p of G.sim.players.values()) if (p.id !== G.myId && p.y < 400) others.push({ x: p.x, z: p.z });
+  if (G.isHost && G.sim?.wv?.place && G.sim.wv.phase === 'boss') others.push(G.sim.wv.place);
+  return { x: me.x, z: me.z, others };
 }
 
 // ================= Главный цикл =================
@@ -1011,7 +1101,8 @@ function loop(now) {
     if (elder) animateRig(elder, dt, false, false);
     ambient(dt);
   }
-  world?.update(t);
+  world?.update(t, G.started ? worldFocus() : undefined);
+  autoTune(dt);
   fx.update(dt);
   composer.render();
 }
@@ -1028,4 +1119,8 @@ setInterval(() => {
 }, 50);
 
 // Для отладки из консоли браузера
-window.__game = { G, me, cam, keys, combat, scene, fx, frame: (dt = 0.016) => { if (G.isHost) { G.sim.update(dt); applyState(G.sim.snapshot()); } G.sendAcc = 1; sendToHost({ t: 'p', x: r2(me.x), y: r2(me.y), z: r2(me.z), ry: r2(me.ry), mv: me.moving ? 1 : 0, a: me.a, ak: me.ak, fl: me.flipN, w: combat.weaponIndex(), car: combat.carState() }); updateLocal(dt); updateCamera(); updateViews(dt, performance.now() / 1000); world?.update(performance.now() / 1000); fx.update(dt); composer.render(); }, setLocked: (v) => { locked = v; } };
+window.__game = { G, me, cam, keys, combat, scene, fx, renderer, composer, camera, frame: (dt = 0.016) => { if (G.isHost) { G.sim.update(dt); applyState(G.sim.snapshot()); } G.sendAcc = 1; sendToHost({ t: 'p', x: r2(me.x), y: r2(me.y), z: r2(me.z), ry: r2(me.ry), mv: me.moving ? 1 : 0, a: me.a, ak: me.ak, fl: me.flipN, w: combat.weaponIndex(), car: combat.carState() }); updateLocal(dt); updateCamera(); updateViews(dt, performance.now() / 1000); world?.update(performance.now() / 1000, worldFocus()); fx.update(dt); composer.render(); }, world: () => world, setQualityChoice, setLocked: (v) => { locked = v; } };
+
+// выбор качества графики (меню и пауза)
+for (const id of ['quality', 'quality2']) { const el = $(id); if (el) { el.value = qChoice; el.addEventListener('change', () => setQualityChoice(el.value)); el.addEventListener('click', (e) => e.stopPropagation()); } }
+applyQuality(qChoice === 'auto' ? detectQuality() : qChoice);

@@ -34,6 +34,18 @@ export const PHOTO_FACADES = {
   Facade018A: { tile: 19.2, metal: true }, // кирпичный жилой дом
   Facade020A: { tile: 19.2, metal: true }, // кирпичный дом с пилонами
 };
+// Фасады, вырезанные и выпрямленные из настоящих фотографий домов Астаны (Wikimedia Commons, свободные лицензии — авторы в README).
+// w, h — сколько метров стены занимает один повтор фото
+export const REAL_FACADES = {
+  astana_ornate: { w: 24.8, h: 12 }, // кирпичный дом с орнаментом, старый центр
+  astana_panel: { w: 23, h: 14 }, // жёлтая панельная девятиэтажка, ул. Ташенова
+  astana_brick: { w: 14, h: 23 }, // кирпичная высотка с красным верхом
+  astana_bay: { w: 35, h: 25 }, // девятиэтажка с остеклёнными балконами
+  astana_modern: { w: 18, h: 24 }, // новый жилой комплекс
+  astana_academy: { w: 21, h: 49, glass: 0.5 }, // Академия госуправления
+  astana_talan: { w: 28, h: 90, glass: 1 }, // Talan Towers
+  astana_w1: { w: 28, h: 68, glass: 1 }, // башня W1
+};
 export const WALL_PHOTOS = [...new Set(Object.values(STYLES).map((st) => st.photo).filter(Boolean))];
 export const FACADE_STYLES = Object.keys(STYLES);
 
@@ -148,6 +160,13 @@ export function makeFacadeMaterials(photo = {}) {
       roughnessMap: tiled(ph.rough, spec.tile), metalnessMap: tiled(ph.metal, spec.tile),
       roughness: 1, metalness: ph.metal ? 1 : 0.1, envMapIntensity: 1.2,
     });
+  }
+  for (const [name, spec] of Object.entries(REAL_FACADES)) {
+    const ph = photo[name];
+    if (!ph) continue;
+    const map = ph.map.clone(); map.wrapS = map.wrapT = THREE.RepeatWrapping; map.repeat.set(1 / spec.w, -1 / spec.h); map.needsUpdate = true;
+    const gl = spec.glass || 0;
+    mats['rp_' + name] = new THREE.MeshStandardMaterial({ map, roughness: 0.85 - 0.55 * gl, metalness: 0.45 * gl, envMapIntensity: 0.9 + 0.5 * gl });
   }
   mats.shop = makeShopMaterial();
   return mats;

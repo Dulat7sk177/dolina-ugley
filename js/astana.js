@@ -7,7 +7,7 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { mulberry32 } from './noise.js';
 import { spruceGeometry, branchTexture, grassTexture, windSway, tbox, tcyl } from './world.js';
 import { ZONES, WATER_LEVEL } from './config.js';
-import { makeFacadeMaterials, SHOP_H, CarFleet, carSpec, PHOTO_FACADES, WALL_PHOTOS } from './cityprops.js';
+import { makeFacadeMaterials, SHOP_H, CarFleet, carSpec, PHOTO_FACADES, WALL_PHOTOS, REAL_FACADES } from './cityprops.js';
 import { buildYards } from './yards.js';
 import { buildInteriors } from './interiors.js';
 import { pointBlocked } from './buildings.js';
@@ -133,6 +133,13 @@ export function isFree(x, z) {
   return getHeight(x, z) > -0.4 && !inBuilding(x, z);
 }
 export const places = () => (index ? index.places : []);
+// данные плиток вокруг точки — для мини-карты (недостающие плитки дозагружаются)
+export function mapTiles(x, z, r, out = []) {
+  out.length = 0;
+  if (!index) return out;
+  tilesNear(x, z, r, (ix, iz) => { const d = tileData.get(ckey(ix, iz)); if (!d) fetchTile(ix, iz); else if (!d.then) out.push(d); });
+  return out;
+}
 function addPoly(p, h, c) {
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
   for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); z0 = Math.min(z0, p[i + 1]); z1 = Math.max(z1, p[i + 1]); }
@@ -166,7 +173,7 @@ function tilesNear(x, z, r, fn) {
 }
 export async function loadWorldAssets(renderer, scene, onProgress) {
   const photoSets = [...Object.keys(PHOTO_FACADES).map((n) => [n, true]), ...WALL_PHOTOS.map((n) => [n, false])];
-  const total = TEX.length * 2 + MODELS.length + 3 + photoSets.reduce((a, [, f]) => a + (f ? 4 : 2), 0);
+  const total = TEX.length * 2 + MODELS.length + 3 + photoSets.reduce((a, [, f]) => a + (f ? 4 : 2), 0) + Object.keys(REAL_FACADES).length;
   let done = 0;
   const tick = () => onProgress?.(++done / total);
   const tl = new THREE.TextureLoader(), gl = new GLTFLoader();
@@ -179,6 +186,7 @@ export async function loadWorldAssets(renderer, scene, onProgress) {
       const first = []; tilesNear(ZONES.village.x, ZONES.village.z, QUALITY.meshR, (ix, iz) => first.push(fetchTile(ix, iz)));
       await Promise.all(first); tick();
     }),
+    ...Object.keys(REAL_FACADES).map(async (n) => { PHOTO[n] = { map: await loadTex(`${ENV}facades/real/${n}.jpg`, true) }; }),
     ...photoSets.map(async ([n, full]) => {
       const u = (k) => `${ENV}facades/${n}_${k}.jpg`;
       const [map, normal, rough, metal] = await Promise.all([loadTex(u('Color'), true), loadTex(u('NormalGL'), false), full ? loadTex(u('Roughness'), false) : null, full ? loadTex(u('Metalness'), false) : null]);
@@ -226,8 +234,21 @@ function extrude(shape, y0, y1) {
 }
 // оттенок стен — у каждого дома свой, чтобы кварталы не выглядели одинаковыми
 const TINTS = [[1, 1, 1], [1, 0.95, 0.86], [0.9, 0.95, 1], [1, 0.9, 0.82], [0.9, 1, 0.93], [1, 0.97, 0.78], [0.86, 0.86, 0.9], [1, 0.86, 0.86], [0.95, 0.9, 1]];
+// какой фасад получит дом: по высоте, типу и «номеру» дома (hv). Большая часть — с реальных фото Астаны
+const ST_TOWER = ['rp_astana_talan', 'rp_astana_brick', 'rp_astana_w1', 'rp_astana_modern', 'rp_astana_academy', 'ph_Facade001', 'rp_astana_w1', 'rp_astana_modern', 'ph_Facade005', 'rp_astana_brick'];
+const ST_GLASS = ['rp_astana_academy', 'ph_Facade006', 'rp_astana_w1', 'ph_Facade019A', 'rp_astana_academy', 'ph_Facade001', 'glassBronze', 'ph_Facade005'];
+const ST_LOW = ['rp_astana_ornate', 'brickYellow', 'rp_astana_panel', 'brickRed', 'rp_astana_ornate', 'panelBeige', 'panelWhite'];
+const ST_MID = ['rp_astana_panel', 'rp_astana_bay', 'panelWhite', 'rp_astana_brick', 'panelBeige', 'rp_astana_modern', 'ph_Facade018A', 'rp_astana_panel', 'panelGrey', 'rp_astana_bay', 'ph_Facade020A'];
+function styleFor(h, kind, hv) {
+  const pick = (a) => a[hv % a.length];
+  if (h >= 45) return pick(ST_TOWER);
+  if ((kind === 'office' || kind === 'hotel' || kind === 'commercial' || kind === 'retail') && h > 16) return pick(ST_GLASS);
+  if (h <= 16 && kind !== 'apartments') return pick(ST_LOW);
+  return pick(ST_MID);
+}
+const plainTint = (style) => style.startsWith('rp_') || style.startsWith('ph_') || style.startsWith('glass'); // фото не перекрашиваем
 function tint(geo, hv, glassy) {
-  const t = glassy ? [1, 1, 1] : TINTS[hv % TINTS.length], k = 0.8 + ((hv * 7) % 23) / 100;
+  const t = glassy ? [1, 1, 1] : TINTS[hv % TINTS.length], k = glassy ? 0.9 + ((hv * 7) % 16) / 100 : 0.8 + ((hv * 7) % 23) / 100;
   const n = geo.attributes.position.count, a = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) { a[i * 3] = t[0] * k; a[i * 3 + 1] = t[1] * k; a[i * 3 + 2] = t[2] * k; }
   geo.setAttribute('color', new THREE.BufferAttribute(a, 3));
@@ -408,11 +429,9 @@ function* buildMesh(c, W) {
     for (let i = 2; i < b.p.length; i += 2) { const qq = shrink(i); shape.lineTo(qq[0], -qq[1]); }
     const hv = (((b.p[0] * 13 + b.p[1] * 7) | 0) >>> 0) % 997;
     const small = h < 8.5 && !['apartments', 'retail', 'commercial', 'office'].includes(b.k);
-    const glassy = h >= 45 || ((b.k === 'office' || b.k === 'hotel' || b.k === 'commercial' || b.k === 'retail') && h > 16);
-    const style = glassy ? ['ph_Facade001', 'ph_Facade005', 'ph_Facade006', 'ph_Facade019A', 'glassBronze', 'ph_Facade006'][hv % 6]
-      : h <= 16 && b.k !== 'apartments' ? ['brickYellow', 'brickRed', 'panelBeige', 'panelWhite'][hv % 4]
-      : ['panelWhite', 'panelBeige', 'panelGrey', 'ph_Facade018A', 'ph_Facade020A', 'panelWhite'][hv % 6];
-    const put = (sides) => (buckets.get(style) || buckets.get('panelWhite')).push(tint(sides, hv, glassy));
+    const style = buckets.has(styleFor(h, b.k, hv)) ? styleFor(h, b.k, hv) : 'panelWhite';
+    const glassy = plainTint(style);
+    const put = (sides) => buckets.get(style).push(tint(sides, hv, glassy));
     // первый этаж с витринами у городских домов (не у гаражей, частных домов и «висящих» частей)
     const shopBand = !mh && h > 9 && !['garage', 'garages', 'shed', 'industrial', 'kiosk'].includes(b.k) && (hv % 5) !== 0;
     if (shopBand) {
@@ -725,17 +744,18 @@ export function buildWorld(scene) {
     const g = new THREE.Group();
     const list = index.sky[ix + ',' + iz];
     if (list) {
-      const sides = [], caps = [];
+      const sides = new Map(), caps = [];
       for (const b of list) {
         const shape = new THREE.Shape(); shape.moveTo(b[1], -b[2]);
         for (let i = 3; i < b.length; i += 2) shape.lineTo(b[i], -b[i + 1]);
         const hv = (((b[1] * 13 + b[2] * 7) | 0) >>> 0) % 997;
         const [cp, sd] = extrude(shape, 0, b[0]);
-        if (sd) sides.push(tint(sd, hv, false)); if (cp) caps.push(cp);
+        const st = S.mats[styleFor(b[0], '', hv)] ? styleFor(b[0], '', hv) : 'panelWhite';
+        if (sd) (sides.get(st) || sides.set(st, []).get(st)).push(tint(sd, hv, plainTint(st))); if (cp) caps.push(cp);
       }
-      if (sides.length) g.add(new THREE.Mesh(mergeGeometries(sides), S.mats.ph_Facade006 || S.mats.panelGrey));
+      for (const [st, list2] of sides) g.add(new THREE.Mesh(mergeGeometries(list2), S.mats[st]));
       if (caps.length) g.add(new THREE.Mesh(mergeGeometries(caps), S.roofMat));
-      for (const x of [...sides, ...caps]) x.dispose();
+      for (const x of [...[...sides.values()].flat(), ...caps]) x.dispose();
     }
     g.traverse((o) => { o.updateMatrix(); o.matrixAutoUpdate = false; });
     scene.add(g);

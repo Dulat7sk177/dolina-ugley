@@ -9,6 +9,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { setQuality as setCityQuality } from './astana.js';
+import { drawMinimap, streetAt } from './minimap.js';
 import { makeCharacter, animateRig, playAttack, playHit, playCheer, playDeath, loadModels } from './models.js';
 import { FX } from './particles.js';
 import { surfaceAt, ceilingAt, resolveBoxes, pointBlocked } from './buildings.js';
@@ -300,7 +301,7 @@ async function loadMap(id) {
   bloom.strength = MAP.bloom;
   camera.far = MAP.far || 600; camera.updateProjectionMatrix();
   applyViewDistance();
-  $('attrib').textContent = MAP.id === 'astana' ? 'Данные карты © участники OpenStreetMap (ODbL)' : '';
+  $('attrib').textContent = MAP.id === 'astana' ? 'Карта © участники OpenStreetMap (ODbL) · фото фасадов: Wikimedia Commons, CC BY-SA (авторы — в README)' : '';
   await modelsReady;
   await loadWorldAssets(renderer, scene, (p) => setStatus(`Загрузка карты «${MAP.title}»… ${Math.round(p * 100)}%`));
   setStatus('Строим мир…');
@@ -537,6 +538,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyE') tryInteract();
   if (e.code === 'Enter') { e.preventDefault(); openChat(); }
   else if (e.code === 'KeyH') usePotion();
+  else if (e.code === 'KeyM') toggleMinimap();
   else combat.onKey(e.code);
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -999,6 +1001,26 @@ function setBar(name, v, max, text) {
   el.querySelector('i').style.width = clamp((v / max) * 100, 0, 100) + '%';
   el.querySelector('span').textContent = text ?? `${Math.ceil(v)} / ${Math.round(max)}`;
 }
+// ===== мини-карта (только Астана) =====
+const MM = { acc: 0, sAcc: 1, big: false };
+function updateMinimap(dt) {
+  const on = MAP.id === 'astana';
+  $('minimap').classList.toggle('hidden', !on);
+  if (!on) return;
+  MM.acc += dt; MM.sAcc += dt;
+  if (MM.acc < 0.045) return;
+  MM.acc = 0;
+  const wv = G.state?.wv;
+  drawMinimap($('mm-canvas'), {
+    x: me.x, z: me.z, yaw: cam.yaw, radius: MM.big ? 650 : 190,
+    others: [...views.players.values()].map((v) => v.pos),
+    enemies: [...views.enemies.values()].map((v) => v.pos),
+    target: wv ? { x: wv[4], z: wv[5], boss: wv[2] === 'boss' } : null,
+  });
+  if (MM.sAcc > 0.5) { MM.sAcc = 0; const n = streetAt(me.x, me.z); if ($('mm-street').textContent !== n) $('mm-street').textContent = n; }
+}
+function toggleMinimap() { MM.big = !MM.big; $('minimap').classList.toggle('big', MM.big); }
+
 function updateHUD() {
   setBar('hp', me.hp, me.maxHp);
   $('lvl').textContent = G.lv[0];
@@ -1090,6 +1112,7 @@ function loop(now) {
     updateViews(dt, t);
     G.hudAcc += dt;
     if (G.hudAcc > 0.08) { G.hudAcc = 0; updateHUD(); }
+    updateMinimap(dt);
     G.partyAcc += dt;
     if (G.partyAcc > 0.25) { G.partyAcc = 0; updateParty(); }
   } else {

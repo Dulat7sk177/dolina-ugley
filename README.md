@@ -111,4 +111,6 @@
 - **Персонажи и анимации**: [Mixamo](https://www.mixamo.com) (Adobe). Их можно бесплатно использовать в играх, но нельзя распространять как отдельный набор моделей. Файлы лежат в `assets/mixamo/`.
 - **Текстуры, растения, камни, реквизит и небо**: [Poly Haven](https://polyhaven.com) (CC0). Файлы лежат в `assets/env/`.
 - **Фото-фасады, штукатурка и кирпич зданий Астаны**: [ambientCG](https://ambientcg.com) (CC0). Файлы лежат в `assets/env/facades/`.
+- **Фасады с реальных фото домов Астаны** (8 шт.): фотографии с [Wikimedia Commons](https://commons.wikimedia.org) под лицензиями CC0 / CC BY / CC BY-SA — авторы и ссылки в `assets/env/facades/real/CREDITS.md`.
+- **Мини-карта с названиями улиц** (клавиша M — масштаб): данные OpenStreetMap.
 - **Старые мультяшные модели**: KayKit (CC0), сейчас не используются. Файлы лежат в `assets/models/`.

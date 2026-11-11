@@ -122,7 +122,7 @@ for (const f of inFiles) {
       const p = e.geometry.map(P).flat();
       if (p.length < 4) continue;
       const w = t.width ? Math.min(30, parseFloat(t.width) || W[t.highway]) : W[t.highway];
-      const road = { w, t: t.highway, b: t.bridge && t.bridge !== 'no' ? 1 : undefined, tn: t.tunnel && t.tunnel !== 'no' ? 1 : undefined };
+      const road = { w, t: t.highway, b: t.bridge && t.bridge !== 'no' ? 1 : undefined, tn: t.tunnel && t.tunnel !== 'no' ? 1 : undefined, n: t['name:ru'] || t.name || undefined }; // n — название улицы для мини-карты
       if (w >= 7 && !road.b && !road.tn) for (let i = 0; i < p.length; i += 2) roadPts.push(p[i], p[i + 1]);
       // в каждую плитку кладём только те отрезки дороги, что проходят рядом с ней
       const runs = new Map();

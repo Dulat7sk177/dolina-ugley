@@ -75,6 +75,12 @@ button.primary:hover { filter: brightness(1.1); }
 #room { padding: 8px 10px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px; font-size: 13px; pointer-events: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 #room b { color: var(--gold); letter-spacing: 2px; font-size: 16px; }
 #room button { padding: 4px 8px; font-size: 12px; }
+#minimap { position: relative; height: 230px; border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden; background: #1b1f24; }
+#minimap.big { height: 360px; }
+#mm-canvas { width: 100%; height: 100%; display: block; }
+#mm-street { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 8px; font-size: 12.5px; font-weight: 700; text-align: center; background: rgba(12,14,17,0.78); color: #ffe9b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mm-street:empty { display: none; }
+#mm-hint { position: absolute; right: 6px; top: 5px; font-size: 10px; color: var(--muted); background: rgba(12,14,17,0.6); padding: 1px 5px; border-radius: 4px; }
 #quest { padding: 10px 12px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px; }
 .qlabel { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
 #qtitle { color: var(--gold); font-size: 18px; margin: 2px 0; }

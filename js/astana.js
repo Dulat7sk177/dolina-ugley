@@ -235,10 +235,10 @@ function extrude(shape, y0, y1) {
 // оттенок стен — у каждого дома свой, чтобы кварталы не выглядели одинаковыми
 const TINTS = [[1, 1, 1], [1, 0.95, 0.86], [0.9, 0.95, 1], [1, 0.9, 0.82], [0.9, 1, 0.93], [1, 0.97, 0.78], [0.86, 0.86, 0.9], [1, 0.86, 0.86], [0.95, 0.9, 1]];
 // какой фасад получит дом: по высоте, типу и «номеру» дома (hv). Большая часть — с реальных фото Астаны
-const ST_TOWER = ['rp_astana_talan', 'rp_astana_brick', 'rp_astana_w1', 'rp_astana_modern', 'rp_astana_academy', 'ph_Facade001', 'rp_astana_w1', 'rp_astana_modern', 'ph_Facade005', 'rp_astana_brick'];
-const ST_GLASS = ['rp_astana_academy', 'ph_Facade006', 'rp_astana_w1', 'ph_Facade019A', 'rp_astana_academy', 'ph_Facade001', 'glassBronze', 'ph_Facade005'];
-const ST_LOW = ['rp_astana_ornate', 'brickYellow', 'rp_astana_panel', 'brickRed', 'rp_astana_ornate', 'panelBeige', 'panelWhite'];
-const ST_MID = ['rp_astana_panel', 'rp_astana_bay', 'panelWhite', 'rp_astana_brick', 'panelBeige', 'rp_astana_modern', 'ph_Facade018A', 'rp_astana_panel', 'panelGrey', 'rp_astana_bay', 'ph_Facade020A'];
+const ST_TOWER = ['rp_astana_talan', 'rp_astana_brick', 'rp_astana_w1', 'rp_astana_modern', 'rp_astana_beige', 'rp_astana_blue', 'rp_astana_embank', 'rp_astana_modern', 'rp_astana_ktz', 'rp_astana_brick', 'rp_astana_beige', 'rp_astana_academy', 'rp_astana_emerald'];
+const ST_GLASS = ['rp_astana_academy', 'ph_Facade006', 'rp_astana_blue', 'rp_astana_kmg', 'ph_Facade019A', 'rp_astana_academy', 'rp_astana_gold', 'ph_Facade001', 'glassBronze', 'rp_astana_kmg', 'ph_Facade005'];
+const ST_LOW = ['rp_astana_ornate', 'brickYellow', 'rp_astana_panel', 'brickRed', 'rp_astana_soviet', 'rp_astana_ornate', 'panelBeige', 'panelWhite'];
+const ST_MID = ['rp_astana_panel', 'rp_astana_soviet', 'rp_astana_bay', 'rp_astana_beige', 'rp_astana_brick', 'panelBeige', 'rp_astana_modern', 'rp_astana_soviet', 'rp_astana_embank', 'rp_astana_panel', 'panelGrey', 'rp_astana_bay', 'ph_Facade020A', 'rp_astana_beige', 'panelWhite'];
 function styleFor(h, kind, hv) {
   const pick = (a) => a[hv % a.length];
   if (h >= 45) return pick(ST_TOWER);
@@ -429,7 +429,7 @@ function* buildMesh(c, W) {
     for (let i = 2; i < b.p.length; i += 2) { const qq = shrink(i); shape.lineTo(qq[0], -qq[1]); }
     const hv = (((b.p[0] * 13 + b.p[1] * 7) | 0) >>> 0) % 997;
     const small = h < 8.5 && !['apartments', 'retail', 'commercial', 'office'].includes(b.k);
-    const style = buckets.has(styleFor(h, b.k, hv)) ? styleFor(h, b.k, hv) : 'panelWhite';
+    const style = b.s && buckets.has(b.s) ? b.s : buckets.has(styleFor(h, b.k, hv)) ? styleFor(h, b.k, hv) : 'panelWhite';
     const glassy = plainTint(style);
     const put = (sides) => buckets.get(style).push(tint(sides, hv, glassy));
     // первый этаж с витринами у городских домов (не у гаражей, частных домов и «висящих» частей)
@@ -744,13 +744,14 @@ export function buildWorld(scene) {
     const g = new THREE.Group();
     const list = index.sky[ix + ',' + iz];
     if (list) {
-      const sides = new Map(), caps = [];
-      for (const b of list) {
+      const sides = new Map(), caps = [], marked = (index.skyS || {})[ix + ',' + iz] || {};
+      for (let bi = 0; bi < list.length; bi++) {
+        const b = list[bi];
         const shape = new THREE.Shape(); shape.moveTo(b[1], -b[2]);
         for (let i = 3; i < b.length; i += 2) shape.lineTo(b[i], -b[i + 1]);
         const hv = (((b[1] * 13 + b[2] * 7) | 0) >>> 0) % 997;
         const [cp, sd] = extrude(shape, 0, b[0]);
-        const st = S.mats[styleFor(b[0], '', hv)] ? styleFor(b[0], '', hv) : 'panelWhite';
+        const st = S.mats[marked[bi]] ? marked[bi] : S.mats[styleFor(b[0], '', hv)] ? styleFor(b[0], '', hv) : 'panelWhite';
         if (sd) (sides.get(st) || sides.set(st, []).get(st)).push(tint(sd, hv, plainTint(st))); if (cp) caps.push(cp);
       }
       for (const [st, list2] of sides) g.add(new THREE.Mesh(mergeGeometries(list2), S.mats[st]));

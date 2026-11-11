@@ -59,6 +59,19 @@ const PLACES = [
   ['Стадион им. Мунайтпасова', /Мұңайтпасов|Мунайтпасов/i, 51.1630, 71.4170],
 ];
 
+// известные здания: по названию в OSM им назначается фасад с их настоящей фотографии
+const MARKS = [
+  [/Emerald|Изумрудн|Северноеs*[CС]ияние/i, 'rp_astana_emerald'],
+  [/Темір Жолы|Темир Жолы/i, 'rp_astana_ktz'],
+  [/Транспорт Тауэр/i, 'glassBronze'],
+  [/НК "?КазМунайГаз/i, 'rp_astana_kmg'],
+  [/Алтын Орда|межрайонный административн/i, 'rp_astana_gold'],
+  [/Министрліктер үйі|Дом Министерств/i, 'rp_astana_beige'],
+  [/Talan|Ritz-Carlton/i, 'rp_astana_talan'],
+  [/Нурсая|Nursaya|Хайвил|Highvill|Триумф|Гранд Алатау/i, 'rp_astana_beige'],
+  [/Abu Dhabi Plaza/i, 'rp_astana_w1'],
+];
+const marks = [];
 const tiles = new Map();
 const tileOf = (x, z) => [Math.floor(x / TILE), Math.floor(z / TILE)];
 const T = (ix, iz) => { const k = ix + ',' + iz; if (!tiles.has(k)) tiles.set(k, { buildings: [], roads: [], water: [], green: [], areas: [], trees: [], parking: [], fences: [], stops: [], signals: [], benches: [] }); return tiles.get(k); };
@@ -85,6 +98,14 @@ for (const f of inFiles) {
     if (t.name && (e.type === 'way' || e.type === 'relation') && (t.building || t.leisure || t.amenity || t.tourism || t.railway || t.shop)) {
       const p = poly();
       if (p && p.length >= 6) { const [cx, cz] = centroid(p); named.push({ n: t.name + ' ' + (t['name:ru'] || '') + ' ' + (t['name:en'] || ''), x: cx, z: cz, a: Math.abs(area(p)) }); }
+    }
+    if (t.name && e.type !== 'node' && (t.building || t['building:part'] || t.landuse || e.type === 'relation')) {
+      const nm = t.name + ' ' + (t['name:ru'] || '') + ' ' + (t['name:en'] || '');
+      const mk = MARKS.find(([re]) => re.test(nm));
+      if (mk) {
+        const rings = e.type === 'way' ? (e.geometry ? [ring(e.geometry)] : []) : (e.members || []).filter((m) => m.geometry).map((m) => ring(m.geometry));
+        for (const p of rings) if (p.length >= 6) { const bb = bbox(p); if (bb[2] - bb[0] < 700 && bb[3] - bb[1] < 700) marks.push({ bb, s: mk[1] }); }
+      }
     }
     if (t['building:part'] && e.type !== 'node') {
       const p = poly();
@@ -154,12 +175,14 @@ for (const pt of parts) { const k = Math.floor(pt.cx / 200) + ',' + Math.floor(p
 const hasPart = (b) => { for (let gx = Math.floor(b.bb[0] / 200); gx <= Math.floor(b.bb[2] / 200); gx++) for (let gz = Math.floor(b.bb[1] / 200); gz <= Math.floor(b.bb[3] / 200); gz++) for (const pt of pgrid.get(gx + ',' + gz) || []) if (pip(b.p, pt.cx, pt.cz)) return true; return false; };
 const skipNear = (x, z) => Math.hypot(x, z) < 30 || (akorda && Math.hypot(x - akorda.x, z - akorda.z) < 70) || (khan && Math.hypot(x - khan.x, z - khan.z) < 110);
 const all = [...buildings.filter((b) => !hasPart(b)), ...parts.filter((pt) => !skipNear(pt.cx, pt.cz))];
-const sky = {};
-let nTall = 0;
+const sky = {}, skyS = {};
+let nTall = 0, nMark = 0;
+const markOf = (b) => { for (const m of marks) if (b.cx > m.bb[0] - 6 && b.cx < m.bb[2] + 6 && b.cz > m.bb[1] - 6 && b.cz < m.bb[3] + 6) return m.s; };
 for (const b of all) {
   const [ix, iz] = tileOf(b.cx, b.cz);
-  T(ix, iz).buildings.push({ p: b.p, h: b.h, mh: b.mh, k: b.k, lv: b.lv });
-  if (b.h >= 22 && !(b.mh > 3)) { (sky[ix + ',' + iz] ||= []).push([Math.round(b.h), ...b.p.map(Math.round)]); nTall++; }
+  const s = b.h >= 12 ? markOf(b) : undefined; if (s) nMark++;
+  T(ix, iz).buildings.push({ p: b.p, h: b.h, mh: b.mh, k: b.k, lv: b.lv, s });
+  if (b.h >= 22 && !(b.mh > 3)) { const l = (sky[ix + ',' + iz] ||= []); if (s) (skyS[ix + ',' + iz] ||= {})[l.length] = s; l.push([Math.round(b.h), ...b.p.map(Math.round)]); nTall++; }
 }
 
 // места для боссов: ближайшая широкая улица рядом с объектом
@@ -195,6 +218,7 @@ for (const [k, t] of tiles) {
   bytes += s.length; list.push(k); nb += (t.buildings || []).length;
   x0 = Math.min(x0, ix); x1 = Math.max(x1, ix); z0 = Math.min(z0, iz); z1 = Math.max(z1, iz);
 }
-const index = { origin: [LAT0, LON0], tile: TILE, bounds: [x0 * TILE, z0 * TILE, (x1 + 1) * TILE, (z1 + 1) * TILE], tiles: list, sky, places, landmarks: { baiterek: { x: 0, z: 0 }, akorda, khan } };
+const index = { origin: [LAT0, LON0], tile: TILE, bounds: [x0 * TILE, z0 * TILE, (x1 + 1) * TILE, (z1 + 1) * TILE], tiles: list, sky, skyS, places, landmarks: { baiterek: { x: 0, z: 0 }, akorda, khan } };
 fs.writeFileSync(path.join(outDir, 'index.json'), JSON.stringify(index));
+console.log('marks', marks.length, 'marked buildings', nMark);
 console.log('tiles', list.length, 'buildings', nb, 'tall', nTall, 'places', places.length, 'size MB', (bytes / 1e6).toFixed(1), 'index KB', (JSON.stringify(index).length / 1e3) | 0, 'bounds', index.bounds);

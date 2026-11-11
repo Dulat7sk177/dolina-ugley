@@ -14,3 +14,10 @@
 | astana_academy.jpg | Академия государственного управления | Lordegraf | CC BY-SA 4.0 | https://commons.wikimedia.org/wiki/File:Академия_государственного_управления_при_Президенте_Республики_Казахстан..jpg |
 | astana_talan.jpg | Talan Towers | Talgautb | CC BY-SA 4.0 | https://commons.wikimedia.org/wiki/File:Talantowers-2.jpg |
 | astana_w1.jpg | башня W1 | Vyacheslav Bukharov | CC BY-SA 4.0 | https://commons.wikimedia.org/wiki/File:Views_of_Astana_(July_2026)_-_0_3.jpg |
+| astana_soviet.jpg | типовой панельный девятиэтажный дом | daltonwb | CC BY 2.0 | https://www.flickr.com/photos/58075298@N05/10253815434 |
+| astana_kmg.jpg | здание «КазМунайГаз» | Marcin.P. | CC BY 2.0 | https://www.flickr.com/photos/146853447@N04/49744182412 |
+| astana_gold.jpg | золотые башни у Дома министерств | Ninara | CC BY 2.0 | https://www.flickr.com/photos/37583176@N00/8239480178 |
+| astana_emerald.jpg | «Изумрудный квартал» | Marcin.P. | CC BY 2.0 | https://www.flickr.com/photos/146853447@N04/49744181747 |
+| astana_ktz.jpg, astana_blue.jpg | башня «Казахстан темир жолы» и соседняя синяя башня | Marcin.P. | CC BY 2.0 | https://www.flickr.com/photos/146853447@N04/49743311048 |
+| astana_embank.jpg | жилой комплекс на набережной Ишима | Ninara | CC BY 2.0 | https://www.flickr.com/photos/37583176@N00/8238367371 |
+| astana_beige.jpg | ЖК «Нурсая» | советник советник (Panoramio) | CC BY 3.0 | https://commons.wikimedia.org/wiki/File:Нурсая-юг_-_panoramio.jpg |

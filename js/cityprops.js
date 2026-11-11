@@ -45,6 +45,14 @@ export const REAL_FACADES = {
   astana_academy: { w: 21, h: 49, glass: 0.5 }, // Академия госуправления
   astana_talan: { w: 28, h: 90, glass: 1 }, // Talan Towers
   astana_w1: { w: 28, h: 68, glass: 1 }, // башня W1
+  astana_soviet: { w: 27, h: 14 }, // типовая панельная девятиэтажка
+  astana_embank: { w: 26, h: 27 }, // красно-белый дом на набережной Ишима
+  astana_beige: { w: 18, h: 27 }, // ЖК «Нурсая»
+  astana_kmg: { w: 36, h: 30, glass: 0.4 }, // КазМунайГаз
+  astana_gold: { w: 22, h: 40, glass: 1 }, // золотые башни Дома министерств
+  astana_emerald: { w: 40, h: 140, glass: 1 }, // Изумрудный квартал
+  astana_ktz: { w: 40, h: 110, glass: 1 }, // башня «Казахстан темир жолы»
+  astana_blue: { w: 25, h: 70, glass: 1 }, // синяя стеклянная башня
 };
 export const WALL_PHOTOS = [...new Set(Object.values(STYLES).map((st) => st.photo).filter(Boolean))];
 export const FACADE_STYLES = Object.keys(STYLES);

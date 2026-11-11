@@ -301,7 +301,7 @@ async function loadMap(id) {
   bloom.strength = MAP.bloom;
   camera.far = MAP.far || 600; camera.updateProjectionMatrix();
   applyViewDistance();
-  $('attrib').textContent = MAP.id === 'astana' ? 'Карта © участники OpenStreetMap (ODbL) · фото фасадов: Wikimedia Commons, CC BY-SA (авторы — в README)' : '';
+  $('attrib').textContent = MAP.id === 'astana' ? 'Карта © участники OpenStreetMap (ODbL) · фото фасадов: Wikimedia Commons и Flickr, CC BY / CC BY-SA (авторы — в README)' : '';
   await modelsReady;
   await loadWorldAssets(renderer, scene, (p) => setStatus(`Загрузка карты «${MAP.title}»… ${Math.round(p * 100)}%`));
   setStatus('Строим мир…');
